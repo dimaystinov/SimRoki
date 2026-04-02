@@ -1,4 +1,4 @@
-use axum::{
+﻿use axum::{
     extract::State,
     http::StatusCode,
     response::IntoResponse,
@@ -8,14 +8,17 @@ use axum::{
 use macroquad::prelude::*;
 use macroquad::ui::{hash, root_ui, widgets};
 use serde::{Deserialize, Serialize};
-use sim_core::{GaitCommand, JointCommand, PoseCommand, SceneKind, ServoTargets, Simulation, SimulationState};
+use sim_core::{
+    GaitCommand, JointCommand, MotionSequenceCommand, PoseCommand, SceneKind, ServoTargets,
+    Simulation, SimulationConfig, SimulationState,
+};
 use std::{
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 use tokio::runtime::Builder;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const WINDOW_WIDTH: i32 = 1280;
 const WINDOW_HEIGHT: i32 = 800;
@@ -27,7 +30,8 @@ const ZOOM_WHEEL_FACTOR: f32 = 1.12;
 const GRID_MINOR_STEP_WORLD: f32 = 0.5;
 const GRID_MAJOR_EVERY: i32 = 4;
 const GROUND_Y: f32 = 0.0;
-const PANEL_WIDTH: f32 = 320.0;
+const PANEL_WIDTH: f32 = 440.0;
+const CONFIG_PATH: &str = "robot_config.toml";
 
 type SharedSimulation = Arc<Mutex<Simulation>>;
 type SharedExternalControl = Arc<Mutex<ExternalControlState>>;
@@ -72,6 +76,9 @@ struct ControlPanelState {
     servo_ki: f32,
     servo_kd: f32,
     servo_max_torque: f32,
+    suspend_height: f32,
+    motion_frame_ms: f32,
+    motion_frames: Vec<[f32; 5]>,
     initialized: bool,
 }
 
@@ -119,7 +126,7 @@ async fn main() {
         .with_target(false)
         .try_init();
 
-    let sim = Arc::new(Mutex::new(Simulation::new_robot()));
+    let sim = Arc::new(Mutex::new(load_simulation()));
     let external_control = Arc::new(Mutex::new(ExternalControlState::default()));
     let mut view = ViewState {
         zoom: 1.0,
@@ -145,6 +152,23 @@ async fn main() {
     }
 }
 
+fn load_simulation() -> Simulation {
+    match Simulation::from_config_file(CONFIG_PATH) {
+        Ok(sim) => {
+            info!("loaded config from {CONFIG_PATH}");
+            sim
+        }
+        Err(err) => {
+            warn!("config load failed, writing default config to {CONFIG_PATH}: {err}");
+            let config = SimulationConfig::default();
+            if let Err(save_err) = config.save_to_file(CONFIG_PATH) {
+                error!("failed to write default config: {save_err}");
+            }
+            Simulation::from_config(config)
+        }
+    }
+}
+
 fn spawn_api_server(sim: SharedSimulation, external_control: SharedExternalControl) {
     thread::spawn(move || {
         let runtime = Builder::new_multi_thread()
@@ -167,11 +191,13 @@ async fn run_server(sim: SharedSimulation, external_control: SharedExternalContr
         .route("/resume", post(resume))
         .route("/reset", post(reset_robot))
         .route("/reset/ball", post(reset_ball))
+        .route("/config/save", post(save_config))
         .route("/scene", post(set_scene))
         .route("/joint/angle", post(set_joint))
         .route("/servo/targets", post(set_targets))
         .route("/pose", post(set_pose))
         .route("/gait", post(set_gait))
+        .route("/motion/sequence_deg", post(set_motion_sequence_deg))
         .with_state(AppState { sim, external_control });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -214,6 +240,16 @@ async fn reset_ball(State(state): State<AppState>) -> Result<Json<OkResponse>, A
     mark_external_control(&state.external_control);
     let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
     sim.reset_ball();
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn save_config(State(state): State<AppState>) -> Result<Json<OkResponse>, AppError> {
+    let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
+    sim.save_config_file(CONFIG_PATH)
+        .map_err(|message| AppError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message,
+        })?;
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -267,6 +303,16 @@ async fn set_gait(
     mark_external_control(&state.external_control);
     let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
     sim.set_gait(gait);
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn set_motion_sequence_deg(
+    State(state): State<AppState>,
+    Json(sequence): Json<Vec<[f32; 5]>>,
+) -> Result<Json<OkResponse>, AppError> {
+    mark_external_control(&state.external_control);
+    let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
+    sim.set_motion_sequence_deg(MotionSequenceCommand { frames: sequence });
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -388,6 +434,7 @@ fn draw_control_panel(
         controls.servo_ki = ki;
         controls.servo_kd = kd;
         controls.servo_max_torque = max_torque;
+        controls.suspend_height = sim.suspend_clearance();
     }
     let external_active = external_control_active(external_control);
     if !controls.initialized {
@@ -395,6 +442,7 @@ fn draw_control_panel(
     }
 
     let mut changed = false;
+    let mut suspend_changed = false;
     widgets::Window::new(
         hash!("servo-panel"),
         vec2(screen_width() - PANEL_WIDTH - 12.0, 12.0),
@@ -413,14 +461,15 @@ fn draw_control_panel(
                 "control source: built-in sliders"
             },
         );
+        ui.label(None, "servo map: [1] right_hip  [2] right_knee  [3] left_hip  [4] left_knee");
         ui.separator();
-        changed |= slider_row(ui, "right_hip", &mut controls.right_hip, -1.6..1.6);
+        changed |= slider_row(ui, "[1] right_hip", &mut controls.right_hip, -std::f32::consts::PI..std::f32::consts::PI);
         joint_status_row(ui, &state, "right_hip", controls.right_hip_zero);
-        changed |= slider_row(ui, "right_knee", &mut controls.right_knee, -1.6..1.6);
+        changed |= slider_row(ui, "[2] right_knee", &mut controls.right_knee, -std::f32::consts::PI..std::f32::consts::PI);
         joint_status_row(ui, &state, "right_knee", controls.right_knee_zero);
-        changed |= slider_row(ui, "left_hip", &mut controls.left_hip, -1.6..1.6);
+        changed |= slider_row(ui, "[3] left_hip", &mut controls.left_hip, -std::f32::consts::PI..std::f32::consts::PI);
         joint_status_row(ui, &state, "left_hip", controls.left_hip_zero);
-        changed |= slider_row(ui, "left_knee", &mut controls.left_knee, -1.6..1.6);
+        changed |= slider_row(ui, "[4] left_knee", &mut controls.left_knee, -std::f32::consts::PI..std::f32::consts::PI);
         joint_status_row(ui, &state, "left_knee", controls.left_knee_zero);
         ui.separator();
         ui.label(None, "PID gains");
@@ -429,19 +478,9 @@ fn draw_control_panel(
         changed |= slider_row(ui, "kd", &mut controls.servo_kd, -1.0..1.0);
         changed |= slider_row(ui, "max_torque", &mut controls.servo_max_torque, 0.5..40.0);
         ui.separator();
-        ui.label(None, "Link masses");
-        for name in ["torso", "left_thigh", "left_shin", "right_thigh", "right_shin"] {
-            if let Some(mass) = state.link_masses.get(name) {
-                ui.label(None, &format!("{name}: {:.2} kg", mass));
-            }
-        }
-        ui.separator();
-        ui.label(None, "Link lengths");
-        for name in ["torso", "left_thigh", "left_shin", "right_thigh", "right_shin"] {
-            if let Some(length) = state.link_lengths.get(name) {
-                ui.label(None, &format!("{name}: {:.2} m", length));
-            }
-        }
+        ui.label(None, "Suspend point");
+        suspend_changed = slider_row(ui, "suspend_height", &mut controls.suspend_height, 0.05..1.8);
+        changed |= suspend_changed;
         if changed {
             if let Ok(mut sim) = sim.lock() {
                 sim.set_servo_gains(
@@ -450,6 +489,9 @@ fn draw_control_panel(
                     controls.servo_kd,
                     controls.servo_max_torque,
                 );
+                if suspend_changed {
+                    sim.set_suspend_clearance(controls.suspend_height);
+                }
             }
         }
         ui.separator();
@@ -457,9 +499,46 @@ fn draw_control_panel(
         if ui.button(None, "Apply sliders") {
             apply_controls(sim, controls);
         }
+        if ui.button(None, "Add frame from sliders") {
+            controls.motion_frames.push(current_motion_frame(controls));
+        }
+        if ui.button(None, "Replace last frame") {
+            let frame = current_motion_frame(controls);
+            if let Some(last) = controls.motion_frames.last_mut() {
+                *last = frame;
+            }
+        }
+        if ui.button(None, "Remove last frame") {
+            let _ = controls.motion_frames.pop();
+        }
+        if ui.button(None, "Clear motion") {
+            controls.motion_frames.clear();
+        }
+        if ui.button(None, "Play motion") {
+            if !controls.motion_frames.is_empty() {
+                if let Ok(mut sim) = sim.lock() {
+                    sim.clear_gait();
+                    sim.set_motion_sequence_deg(MotionSequenceCommand {
+                        frames: controls.motion_frames.clone(),
+                    });
+                }
+            }
+        }
         if ui.button(None, "Use current pose as zero") {
-            controls.capture_zero_from_state(&state);
+            if let Ok(mut sim) = sim.lock() {
+                sim.set_servo_zero_to_current_pose();
+                controls.sync_from_state(&sim.state());
+            }
             apply_controls(sim, controls);
+        }
+        if ui.button(None, "Save config") {
+            if let Ok(mut sim) = sim.lock() {
+                if let Err(err) = sim.save_config_file(CONFIG_PATH) {
+                    error!("failed to save config: {err}");
+                } else {
+                    info!("saved config to {CONFIG_PATH}");
+                }
+            }
         }
         if ui.button(
             None,
@@ -499,6 +578,23 @@ fn draw_control_panel(
         }
 
         ui.separator();
+        ui.label(None, "Debug info");
+        ui.label(None, "Motion editor");
+        slider_row(ui, "frame_ms", &mut controls.motion_frame_ms, 20.0..3000.0);
+        ui.label(
+            None,
+            "frame format: [time_ms, servo1, servo2, servo3, servo4] in degrees",
+        );
+        for (idx, frame) in controls.motion_frames.iter().enumerate() {
+            ui.label(
+                None,
+                &format!(
+                    "#{idx}: [{:.0}, {:.1}, {:.1}, {:.1}, {:.1}]",
+                    frame[0], frame[1], frame[2], frame[3], frame[4]
+                ),
+            );
+        }
+        ui.separator();
         ui.label(None, &format!("L foot: {}", state.contacts.left_foot));
         ui.label(None, &format!("R foot: {}", state.contacts.right_foot));
         ui.label(
@@ -508,6 +604,20 @@ fn draw_control_panel(
                 sim.lock().ok().map(|sim| sim.robot_suspended()).unwrap_or(false)
             ),
         );
+        ui.separator();
+        ui.label(None, "Link masses");
+        for name in ["torso", "left_thigh", "left_shin", "right_thigh", "right_shin"] {
+            if let Some(mass) = state.link_masses.get(name) {
+                ui.label(None, &format!("{name}: {:.2} kg", mass));
+            }
+        }
+        ui.separator();
+        ui.label(None, "Link lengths");
+        for name in ["torso", "left_thigh", "left_shin", "right_thigh", "right_shin"] {
+            if let Some(length) = state.link_lengths.get(name) {
+                ui.label(None, &format!("{name}: {:.2} m", length));
+            }
+        }
     });
 
     if changed && !external_active {
@@ -523,7 +633,7 @@ fn slider_row(
 ) -> bool {
     let before = *value;
     let text = if label.contains("hip") || label.contains("knee") {
-        format!("{label}: {:.1} deg", value.to_degrees())
+        format!("{label}: {:.1}°", value.to_degrees())
     } else {
         format!("{label}: {:.2}", *value)
     };
@@ -542,7 +652,7 @@ fn joint_status_row(
         ui.label(
             None,
             &format!(
-                "current: {:.1} deg | target: {:.1} deg | zero: {:.1} deg | used: {:.1} deg",
+                "current: {:.1}° | target: {:.1}° | zero: {:.1}° | used: {:.1}°",
                 (joint.angle - zero).to_degrees(),
                 (joint.target - zero).to_degrees(),
                 zero.to_degrees(),
@@ -562,6 +672,16 @@ fn apply_controls(sim: &SharedSimulation, controls: &ControlPanelState) {
             left_knee: Some(controls.left_knee_zero + controls.left_knee),
         });
     }
+}
+
+fn current_motion_frame(controls: &ControlPanelState) -> [f32; 5] {
+    [
+        controls.motion_frame_ms.max(1.0),
+        (controls.right_hip_zero + controls.right_hip).to_degrees(),
+        (controls.right_knee_zero + controls.right_knee).to_degrees(),
+        (controls.left_hip_zero + controls.left_hip).to_degrees(),
+        (controls.left_knee_zero + controls.left_knee).to_degrees(),
+    ]
 }
 
 fn draw_grid(view: &ViewState) {
@@ -601,6 +721,15 @@ fn draw_grid(view: &ViewState) {
             },
             color,
         );
+        if is_major || is_axis {
+            draw_text(
+                &format!("{world_x:.1} m"),
+                a.x + 4.0,
+                screen_height() - 8.0,
+                16.0,
+                color_u8!(120, 112, 99, 255),
+            );
+        }
     }
 
     let start_y = (bottom / GRID_MINOR_STEP_WORLD).floor() as i32 - 1;
@@ -632,6 +761,15 @@ fn draw_grid(view: &ViewState) {
             },
             color,
         );
+        if is_major || is_axis {
+            draw_text(
+                &format!("{world_y:.1} m"),
+                8.0,
+                a.y - 4.0,
+                16.0,
+                color_u8!(120, 112, 99, 255),
+            );
+        }
     }
 
     let ground_a = world_to_screen(vec2(left - 4.0, GROUND_Y), view);
@@ -659,11 +797,16 @@ fn draw_ball_scene(state: &SimulationState, view: &ViewState) {
 }
 
 fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &ViewState) {
-    let (segments, markers, state) = {
+    let (segments, markers, center_of_mass, state) = {
         let Ok(sim) = sim.lock() else {
             return;
         };
-        (sim.robot_segments(), sim.joint_markers(), sim.state())
+        (
+            sim.robot_segments(),
+            sim.joint_markers(),
+            sim.robot_center_of_mass(),
+            sim.state(),
+        )
     };
 
     for (idx, segment) in segments.iter().enumerate() {
@@ -684,14 +827,38 @@ fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &Vie
     for (joint_name, point) in markers {
         if let Some(joint) = state.joints.get(&joint_name) {
             let screen = world_to_screen(vec2(point[0], point[1]), view);
+            let text = format!("{:.1}°", joint.angle.to_degrees());
+            let dims = measure_text(&text, None, 18, 1.0);
+            let text_x = if joint_name.starts_with("left_") {
+                screen.x - dims.width - 10.0
+            } else {
+                screen.x + 10.0
+            };
             draw_text(
-                &format!("{:.1} deg", joint.angle.to_degrees()),
-                screen.x + 10.0,
+                &text,
+                text_x,
                 screen.y - 10.0,
                 18.0,
                 color_u8!(34, 40, 49, 255),
             );
         }
+    }
+
+    if let Some(com) = center_of_mass {
+        let screen = world_to_screen(vec2(com[0], com[1]), view);
+        let projection = world_to_screen(vec2(com[0], GROUND_Y - 0.12), view);
+        let com_color = color_u8!(34, 148, 83, 255);
+        let com_outline = color_u8!(20, 93, 52, 255);
+        draw_circle(screen.x, screen.y, 6.0 * view.zoom, com_color);
+        draw_circle_lines(screen.x, screen.y, 10.0 * view.zoom, 2.0, com_outline);
+        draw_circle(projection.x, projection.y, 5.0 * view.zoom, com_color);
+        draw_circle_lines(
+            projection.x,
+            projection.y,
+            8.0 * view.zoom,
+            2.0,
+            com_outline,
+        );
     }
 }
 
@@ -710,7 +877,7 @@ fn draw_overlay(state: &SimulationState, view: &ViewState) {
         if let Some(joint) = state.joints.get(name) {
             draw_text(
                 &format!(
-                    "{name}: {:.1} -> {:.1} deg",
+                    "{name}: {:.1}° -> {:.1}°",
                     joint.angle.to_degrees(),
                     joint.target.to_degrees()
                 ),
@@ -793,14 +960,17 @@ impl Default for ControlPanelState {
             right_knee: 0.0,
             left_hip: 0.0,
             left_knee: 0.0,
-            right_hip_zero: -0.15,
-            right_knee_zero: 1.15,
-            left_hip_zero: -0.15,
-            left_knee_zero: 1.15,
+            right_hip_zero: 0.0,
+            right_knee_zero: 0.0,
+            left_hip_zero: 0.0,
+            left_knee_zero: 0.0,
             servo_kp: 20.0,
             servo_ki: 0.0,
             servo_kd: 0.0,
             servo_max_torque: 10.0,
+            suspend_height: 0.8,
+            motion_frame_ms: 300.0,
+            motion_frames: Vec::new(),
             initialized: false,
         }
     }
@@ -808,6 +978,18 @@ impl Default for ControlPanelState {
 
 impl ControlPanelState {
     fn sync_from_state(&mut self, state: &SimulationState) {
+        if let Some(zero) = state.servo_zeros.get("right_hip") {
+            self.right_hip_zero = *zero;
+        }
+        if let Some(zero) = state.servo_zeros.get("right_knee") {
+            self.right_knee_zero = *zero;
+        }
+        if let Some(zero) = state.servo_zeros.get("left_hip") {
+            self.left_hip_zero = *zero;
+        }
+        if let Some(zero) = state.servo_zeros.get("left_knee") {
+            self.left_knee_zero = *zero;
+        }
         if let Some(joint) = state.joints.get("right_hip") {
             self.right_hip = joint.target - self.right_hip_zero;
         }
@@ -821,25 +1003,6 @@ impl ControlPanelState {
             self.left_knee = joint.target - self.left_knee_zero;
         }
         self.initialized = true;
-    }
-
-    fn capture_zero_from_state(&mut self, state: &SimulationState) {
-        if let Some(joint) = state.joints.get("right_hip") {
-            self.right_hip_zero = joint.angle;
-        }
-        if let Some(joint) = state.joints.get("right_knee") {
-            self.right_knee_zero = joint.angle;
-        }
-        if let Some(joint) = state.joints.get("left_hip") {
-            self.left_hip_zero = joint.angle;
-        }
-        if let Some(joint) = state.joints.get("left_knee") {
-            self.left_knee_zero = joint.angle;
-        }
-        self.right_hip = 0.0;
-        self.right_knee = 0.0;
-        self.left_hip = 0.0;
-        self.left_knee = 0.0;
     }
 }
 
@@ -865,3 +1028,5 @@ fn external_control_active(external_control: &SharedExternalControl) -> bool {
         .map(|last| last.elapsed() < Duration::from_secs(2))
         .unwrap_or(false)
 }
+
+

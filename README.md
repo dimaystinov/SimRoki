@@ -6,7 +6,7 @@ Desktop-native 2D simulator of a five-link biped robot built on `rapier2d`, with
 
 Implemented right now:
 
-- `sim_core/`: physics world, robot model, servo control, state export
+- `sim_core/`: physics world, robot model, config loading, servo control, state export
 - `native_app/`: native desktop window on `macroquad`
 - local control server on `http://127.0.0.1:8080`
 - optional `python-sdk/` for external control, while desktop control works standalone
@@ -30,6 +30,34 @@ The servo angle is the relative angle between neighboring links:
 - hip: `thigh` relative to `torso`
 - knee: `shin` relative to `thigh`
 
+## Config file
+
+The simulator now reads its startup parameters from:
+
+- [robot_config.toml](C:/Users/root/Documents/New%20project/robot_config.toml)
+
+Configurable values include:
+
+- gravity and fixed physics step
+- ground size and friction
+- torso, thigh, and shin geometry
+- link masses
+- link frictions
+- body damping
+- initial body positions
+- suspend anchor clearance
+- servo `kp`, `ki`, `kd`
+- `max_torque`
+- integral limit
+- servo zero positions
+- startup joint targets
+
+Notes:
+
+- the config is the startup source of truth
+- the desktop app has a `Save config` button to write the current runtime config back to `robot_config.toml`
+- `Use current pose as zero` updates the runtime servo zeros, and those zeros are used by the sliders
+
 ## Desktop app features
 
 - native desktop window, no browser UI
@@ -43,6 +71,7 @@ The servo angle is the relative angle between neighboring links:
 - joint angle labels rendered near the robot
 - `Use current pose as zero`
 - slider control relative to the chosen zero pose
+- `Save config`
 - `Suspend top point` debug mode
 - higher suspend anchor for servo debugging
 - automatic fallback to built-in control when no external API control is active
@@ -58,6 +87,11 @@ Current runtime-adjustable gains:
 - `kd`: `-1 .. 1`
 - `max_torque`: positive limit only
 
+Angle limits:
+
+- joint targets are now clamped only to `±180°`
+- there are no extra hip/knee-specific software limits inside the servo target path
+
 Notes:
 
 - default `kd = 0`
@@ -67,7 +101,7 @@ Notes:
 
 ## Geometry
 
-Current link lengths:
+Current default link lengths:
 
 - `torso`: `0.68 m`
 - `left_thigh`: `0.46 m`
@@ -75,13 +109,13 @@ Current link lengths:
 - `right_thigh`: `0.46 m`
 - `right_shin`: `0.50 m`
 
-Current link masses from the running simulation:
+Current default link masses:
 
-- `torso`: about `0.31824 kg`
-- `left_thigh`: about `0.14076 kg`
-- `left_shin`: about `0.12600 kg`
-- `right_thigh`: about `0.14076 kg`
-- `right_shin`: about `0.12600 kg`
+- `torso`: `0.31824002 kg`
+- `left_thigh`: `0.14076002 kg`
+- `left_shin`: `0.12600 kg`
+- `right_thigh`: `0.14076002 kg`
+- `right_shin`: `0.12600 kg`
 
 The desktop UI shows both current masses and current lengths.
 
@@ -133,6 +167,7 @@ Current local desktop control API:
 - contacts
 - link masses
 - link lengths
+- servo zero offsets
 
 ## Python control
 
@@ -153,6 +188,26 @@ If you want imports without installation:
 ```powershell
 $env:PYTHONPATH="C:\Users\root\Documents\New project\python-sdk"
 python -m robot_sim.cli state
+```
+
+## Local git restore point
+
+The current startup baseline is saved in local git as:
+
+- commit: `e53e550`
+- tag: `start-state`
+
+Useful commands:
+
+```powershell
+git checkout start-state
+```
+
+Return `master` to the saved startup state:
+
+```powershell
+git checkout master
+git reset --hard start-state
 ```
 
 ## Verification

@@ -1,26 +1,17 @@
+mod config;
+
 use nalgebra::{point, vector};
 use rapier2d::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
-const GRAVITY_Y: f32 = -9.81;
-const DT: f32 = 1.0 / 120.0;
-const SERVO_KP_DEFAULT: f32 = 20.0;
-const SERVO_KI_DEFAULT: f32 = 0.0;
-const SERVO_KD_DEFAULT: f32 = 0.0;
-const SERVO_MAX_TORQUE_DEFAULT: f32 = 10.0;
+pub use config::{
+    BodyDynamicsConfig, BodyPoseConfig, InitialPoseConfig, JointAnglesConfig, LinkConfig, PhysicsConfig, RobotConfig,
+    ServoConfig, SimulationConfig,
+};
+
 const TORSO_UPRIGHT_KP: f32 = 0.0;
 const TORSO_UPRIGHT_KD: f32 = 0.0;
-const GROUND_HALF_WIDTH: f32 = 5_000.0;
-const LEG_HALF_WIDTH: f32 = 0.045;
-const THIGH_HALF_HEIGHT: f32 = 0.23;
-const SHIN_HALF_HEIGHT: f32 = 0.25;
-const TORSO_HALF_WIDTH: f32 = 0.045;
-const TORSO_HALF_HEIGHT: f32 = 0.34;
-const SUSPEND_CLEARANCE: f32 = 0.45;
-const TORSO_DENSITY: f32 = 5.2;
-const THIGH_DENSITY: f32 = 3.4;
-const SHIN_DENSITY: f32 = 2.8;
 const GROUP_GROUND: Group = Group::GROUP_1;
 const GROUP_ROBOT: Group = Group::GROUP_2;
 const GROUP_BALL: Group = Group::GROUP_3;
@@ -108,6 +99,7 @@ pub struct SimulationState {
     pub joints: BTreeMap<String, JointState>,
     pub link_masses: BTreeMap<String, f32>,
     pub link_lengths: BTreeMap<String, f32>,
+    pub servo_zeros: BTreeMap<String, f32>,
     pub contacts: ContactState,
 }
 
@@ -162,6 +154,11 @@ pub struct GaitPhase {
     pub joints: BTreeMap<String, f32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotionSequenceCommand {
+    pub frames: Vec<[f32; 5]>,
+}
+
 #[derive(Debug, Clone)]
 struct JointServo {
     parent: RigidBodyHandle,
@@ -188,6 +185,20 @@ struct GaitRuntime {
     phases: Vec<GaitPhase>,
     cycle_s: f32,
     elapsed: f32,
+    start_targets: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone)]
+struct MotionSequenceRuntime {
+    frames: Vec<MotionFrame>,
+    elapsed: f32,
+    start_targets: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone)]
+struct MotionFrame {
+    duration_s: f32,
+    joints: BTreeMap<String, f32>,
 }
 
 pub struct Simulation {
@@ -206,10 +217,12 @@ pub struct Simulation {
     ball: Option<RigidBodyHandle>,
     robot: Option<RobotHandles>,
     scene: SceneKind,
+    config: SimulationConfig,
     time: f32,
     paused: bool,
     accumulator: f32,
     gait: Option<GaitRuntime>,
+    motion_sequence: Option<MotionSequenceRuntime>,
     robot_suspended: bool,
     servo_kp: f32,
     servo_ki: f32,
@@ -219,13 +232,31 @@ pub struct Simulation {
 
 impl Default for Simulation {
     fn default() -> Self {
-        Self::new_robot()
+        Self::from_config(SimulationConfig::default())
     }
 }
 
 impl Simulation {
+    pub fn from_config(config: SimulationConfig) -> Self {
+        Self::new_robot_with_config_and_suspension(config, false)
+    }
+
+    pub fn from_config_file(path: impl AsRef<Path>) -> Result<Self, String> {
+        let config = SimulationConfig::load_from_file(path)?;
+        Ok(Self::from_config(config))
+    }
+
+    pub fn save_config_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.sync_runtime_settings_into_config();
+        self.config.save_to_file(path)
+    }
+
     pub fn new_ball() -> Self {
-        let mut sim = Self::empty(SceneKind::Ball);
+        Self::new_ball_with_config(SimulationConfig::default())
+    }
+
+    pub fn new_ball_with_config(config: SimulationConfig) -> Self {
+        let mut sim = Self::empty(SceneKind::Ball, config);
         sim.spawn_ground();
 
         let body = RigidBodyBuilder::dynamic()
@@ -248,24 +279,28 @@ impl Simulation {
     }
 
     pub fn new_robot() -> Self {
-        Self::new_robot_with_suspension(false)
+        Self::new_robot_with_config_and_suspension(SimulationConfig::default(), false)
     }
 
     pub fn new_robot_with_suspension(suspended: bool) -> Self {
-        let mut sim = Self::empty(SceneKind::Robot);
+        Self::new_robot_with_config_and_suspension(SimulationConfig::default(), suspended)
+    }
+
+    pub fn new_robot_with_config_and_suspension(config: SimulationConfig, suspended: bool) -> Self {
+        let mut sim = Self::empty(SceneKind::Robot, config);
         sim.robot_suspended = suspended;
         sim.spawn_ground();
         sim.spawn_robot();
         sim
     }
 
-    fn empty(scene: SceneKind) -> Self {
+    fn empty(scene: SceneKind, config: SimulationConfig) -> Self {
         let mut integration_parameters = IntegrationParameters::default();
-        integration_parameters.dt = DT;
+        integration_parameters.dt = config.physics.dt.max(1.0 / 1000.0);
 
         Self {
             pipeline: PhysicsPipeline::new(),
-            gravity: vector![0.0, GRAVITY_Y],
+            gravity: vector![0.0, config.physics.gravity_y],
             integration_parameters,
             island_manager: IslandManager::new(),
             broad_phase: BroadPhaseMultiSap::new(),
@@ -279,15 +314,17 @@ impl Simulation {
             ball: None,
             robot: None,
             scene,
+            config: config.clone(),
             time: 0.0,
             paused: false,
             accumulator: 0.0,
             gait: None,
+            motion_sequence: None,
             robot_suspended: false,
-            servo_kp: SERVO_KP_DEFAULT,
-            servo_ki: SERVO_KI_DEFAULT,
-            servo_kd: SERVO_KD_DEFAULT,
-            servo_max_torque: SERVO_MAX_TORQUE_DEFAULT,
+            servo_kp: config.servo.kp,
+            servo_ki: config.servo.ki,
+            servo_kd: config.servo.kd,
+            servo_max_torque: config.servo.max_torque,
         }
     }
 
@@ -298,13 +335,13 @@ impl Simulation {
                 .build(),
         );
         self.colliders.insert_with_parent(
-            ColliderBuilder::cuboid(GROUND_HALF_WIDTH, 0.1)
+            ColliderBuilder::cuboid(self.config.physics.ground_half_width, 0.1)
                 .collision_groups(InteractionGroups::new(
                     GROUP_GROUND,
                     GROUP_GROUND | GROUP_ROBOT | GROUP_BALL,
                 ))
-                .friction(1.35)
-                .restitution(0.0)
+                .friction(self.config.physics.ground_friction)
+                .restitution(self.config.physics.ground_restitution)
                 .build(),
             ground,
             &mut self.bodies,
@@ -312,76 +349,102 @@ impl Simulation {
     }
 
     fn spawn_robot(&mut self) {
+        let torso_half_width = self.config.robot.torso.width * 0.5;
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        let leg_half_width = self.config.robot.thigh.width * 0.5;
+        let thigh_half_height = self.config.robot.thigh.length * 0.5;
+        let shin_half_height = self.config.robot.shin.length * 0.5;
+        let pose = self.config.robot.initial_pose.clone();
         let (torso, _) = self.spawn_box(
-            vector![0.0, 1.08],
-            TORSO_HALF_WIDTH,
-            TORSO_HALF_HEIGHT,
-            TORSO_DENSITY,
-            1.0,
+            vector![pose.torso.x, pose.torso.y],
+            pose.torso.angle,
+            torso_half_width,
+            torso_half_height,
+            self.config.robot.torso.mass,
+            self.config.robot.torso.friction,
         );
         let (left_thigh, _) = self.spawn_box(
-            vector![-0.08, 0.63],
-            LEG_HALF_WIDTH,
-            THIGH_HALF_HEIGHT,
-            THIGH_DENSITY,
-            1.0,
+            vector![pose.left_thigh.x, pose.left_thigh.y],
+            pose.left_thigh.angle,
+            leg_half_width,
+            thigh_half_height,
+            self.config.robot.thigh.mass,
+            self.config.robot.thigh.friction,
         );
         let (left_shin, left_shin_collider) = self.spawn_box(
-            vector![-0.17, 0.14],
-            LEG_HALF_WIDTH,
-            SHIN_HALF_HEIGHT,
-            SHIN_DENSITY,
-            1.2,
+            vector![pose.left_shin.x, pose.left_shin.y],
+            pose.left_shin.angle,
+            leg_half_width,
+            shin_half_height,
+            self.config.robot.shin.mass,
+            self.config.robot.shin.friction,
         );
         let (right_thigh, _) = self.spawn_box(
-            vector![0.08, 0.63],
-            LEG_HALF_WIDTH,
-            THIGH_HALF_HEIGHT,
-            THIGH_DENSITY,
-            1.0,
+            vector![pose.right_thigh.x, pose.right_thigh.y],
+            pose.right_thigh.angle,
+            leg_half_width,
+            thigh_half_height,
+            self.config.robot.thigh.mass,
+            self.config.robot.thigh.friction,
         );
         let (right_shin, right_shin_collider) = self.spawn_box(
-            vector![0.17, 0.14],
-            LEG_HALF_WIDTH,
-            SHIN_HALF_HEIGHT,
-            SHIN_DENSITY,
-            1.2,
+            vector![pose.right_shin.x, pose.right_shin.y],
+            pose.right_shin.angle,
+            leg_half_width,
+            shin_half_height,
+            self.config.robot.shin.mass,
+            self.config.robot.shin.friction,
         );
 
         self.insert_revolute(
             torso,
             left_thigh,
-            point![0.0, -TORSO_HALF_HEIGHT],
-            point![0.0, THIGH_HALF_HEIGHT],
+            point![0.0, -torso_half_height],
+            point![0.0, thigh_half_height],
         );
-        self.insert_revolute(left_thigh, left_shin, point![0.0, -THIGH_HALF_HEIGHT], point![0.0, SHIN_HALF_HEIGHT]);
+        self.insert_revolute(left_thigh, left_shin, point![0.0, -thigh_half_height], point![0.0, shin_half_height]);
         self.insert_revolute(
             torso,
             right_thigh,
-            point![0.0, -TORSO_HALF_HEIGHT],
-            point![0.0, THIGH_HALF_HEIGHT],
+            point![0.0, -torso_half_height],
+            point![0.0, thigh_half_height],
         );
-        self.insert_revolute(right_thigh, right_shin, point![0.0, -THIGH_HALF_HEIGHT], point![0.0, SHIN_HALF_HEIGHT]);
+        self.insert_revolute(right_thigh, right_shin, point![0.0, -thigh_half_height], point![0.0, shin_half_height]);
 
         if self.robot_suspended {
             let anchor = self.bodies.insert(
                 RigidBodyBuilder::fixed()
-                    .translation(vector![0.0, 1.08 + TORSO_HALF_HEIGHT + SUSPEND_CLEARANCE])
+                    .translation(vector![
+                        pose.torso.x,
+                        pose.torso.y + torso_half_height + self.config.robot.suspend_clearance
+                    ])
                     .build(),
             );
             let hang_joint = RevoluteJointBuilder::new()
                 .local_anchor1(point![0.0, 0.0])
-                .local_anchor2(point![0.0, TORSO_HALF_HEIGHT])
+                .local_anchor2(point![0.0, torso_half_height])
                 .contacts_enabled(false)
                 .build();
             self.impulse_joints.insert(anchor, torso, hang_joint, true);
         }
 
         let mut servos = BTreeMap::new();
-        servos.insert(JointName::RightHip, JointServo::new(torso, right_thigh, -0.15));
-        servos.insert(JointName::RightKnee, JointServo::new(right_thigh, right_shin, 1.15));
-        servos.insert(JointName::LeftHip, JointServo::new(torso, left_thigh, -0.15));
-        servos.insert(JointName::LeftKnee, JointServo::new(left_thigh, left_shin, 1.15));
+        servos.insert(
+            JointName::RightHip,
+            JointServo::new(torso, right_thigh, self.config.servo.initial_targets.right_hip),
+        );
+        servos.insert(
+            JointName::RightKnee,
+            JointServo::new(right_thigh, right_shin, self.config.servo.initial_targets.right_knee),
+        );
+        servos.insert(
+            JointName::LeftHip,
+            JointServo::new(torso, left_thigh, self.config.servo.initial_targets.left_hip),
+        );
+        servos.insert(
+            JointName::LeftKnee,
+            JointServo::new(left_thigh, left_shin, self.config.servo.initial_targets.left_knee),
+        );
 
         self.robot = Some(RobotHandles {
             torso,
@@ -398,16 +461,24 @@ impl Simulation {
     fn spawn_box(
         &mut self,
         translation: Vector<Real>,
+        angle: f32,
         half_x: f32,
         half_y: f32,
-        density: f32,
+        mass: f32,
         friction: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
+        let area = (half_x * 2.0) * (half_y * 2.0);
+        let density = if area > f32::EPSILON {
+            mass.max(0.0001) / area
+        } else {
+            1.0
+        };
         let handle = self.bodies.insert(
             RigidBodyBuilder::dynamic()
                 .translation(translation)
-                .angular_damping(0.85)
-                .linear_damping(0.08)
+                .rotation(angle)
+                .angular_damping(self.config.robot.body_dynamics.angular_damping)
+                .linear_damping(self.config.robot.body_dynamics.linear_damping)
                 .build(),
         );
         let collider = self.colliders.insert_with_parent(
@@ -442,13 +513,13 @@ impl Simulation {
     }
 
     pub fn reset_ball(&mut self) {
-        *self = Self::new_ball();
+        *self = Self::new_ball_with_config(self.config.clone());
     }
 
     pub fn reset_robot(&mut self) {
         let targets = self.current_targets();
         let gains = self.servo_gains();
-        *self = Self::new_robot_with_suspension(self.robot_suspended);
+        *self = Self::new_robot_with_config_and_suspension(self.config.clone(), self.robot_suspended);
         self.set_servo_gains(gains.0, gains.1, gains.2, gains.3);
         self.apply_targets(targets);
     }
@@ -467,15 +538,15 @@ impl Simulation {
 
     pub fn set_scene(&mut self, scene: SceneKind) {
         *self = match scene {
-            SceneKind::Ball => Self::new_ball(),
-            SceneKind::Robot => Self::new_robot_with_suspension(self.robot_suspended),
+            SceneKind::Ball => Self::new_ball_with_config(self.config.clone()),
+            SceneKind::Robot => Self::new_robot_with_config_and_suspension(self.config.clone(), self.robot_suspended),
         };
     }
 
     pub fn set_robot_suspended(&mut self, suspended: bool) {
         let targets = self.current_targets();
         let gains = self.servo_gains();
-        *self = Self::new_robot_with_suspension(suspended);
+        *self = Self::new_robot_with_config_and_suspension(self.config.clone(), suspended);
         self.set_servo_gains(gains.0, gains.1, gains.2, gains.3);
         self.apply_targets(targets);
     }
@@ -484,15 +555,71 @@ impl Simulation {
         self.robot_suspended
     }
 
+    pub fn suspend_clearance(&self) -> f32 {
+        self.config.robot.suspend_clearance
+    }
+
+    pub fn set_suspend_clearance(&mut self, clearance: f32) {
+        let clearance = clearance.clamp(0.05, 3.0);
+        self.sync_runtime_settings_into_config();
+        self.config.robot.suspend_clearance = clearance;
+
+        if self.scene == SceneKind::Robot {
+            let paused = self.paused;
+            let config = self.config.clone();
+            let suspended = self.robot_suspended;
+            *self = Self::new_robot_with_config_and_suspension(config, suspended);
+            self.paused = paused;
+        }
+    }
+
     pub fn set_servo_gains(&mut self, kp: f32, ki: f32, kd: f32, max_torque: f32) {
         self.servo_kp = kp.clamp(-20.0, 20.0);
         self.servo_ki = ki.clamp(-5.0, 5.0);
         self.servo_kd = kd.clamp(-1.0, 1.0);
         self.servo_max_torque = max_torque.clamp(0.5, 100.0);
+        self.config.servo.kp = self.servo_kp;
+        self.config.servo.ki = self.servo_ki;
+        self.config.servo.kd = self.servo_kd;
+        self.config.servo.max_torque = self.servo_max_torque;
     }
 
     pub fn servo_gains(&self) -> (f32, f32, f32, f32) {
         (self.servo_kp, self.servo_ki, self.servo_kd, self.servo_max_torque)
+    }
+
+    pub fn servo_zero_offsets(&self) -> JointAnglesConfig {
+        self.config.servo.zero_offsets
+    }
+
+    pub fn set_servo_zero_offsets(&mut self, zeros: JointAnglesConfig) {
+        self.config.servo.zero_offsets = zeros;
+    }
+
+    pub fn set_servo_zero_to_current_pose(&mut self) {
+        let zeros = JointAnglesConfig {
+            right_hip: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.torso, robot.right_thigh))
+                .unwrap_or(self.config.servo.zero_offsets.right_hip),
+            right_knee: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.right_thigh, robot.right_shin))
+                .unwrap_or(self.config.servo.zero_offsets.right_knee),
+            left_hip: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.torso, robot.left_thigh))
+                .unwrap_or(self.config.servo.zero_offsets.left_hip),
+            left_knee: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.left_thigh, robot.left_shin))
+                .unwrap_or(self.config.servo.zero_offsets.left_knee),
+        };
+        self.set_servo_zero_offsets(zeros);
     }
 
     pub fn set_joint_target(&mut self, joint: JointName, angle: f32) {
@@ -521,22 +648,48 @@ impl Simulation {
     }
 
     pub fn set_gait(&mut self, gait: GaitCommand) {
+        let start_targets = self.current_targets_map();
         self.gait = Some(GaitRuntime {
             phases: gait.phases,
-            cycle_s: gait.cycle_s.max(DT),
+            cycle_s: gait.cycle_s.max(self.dt()),
             elapsed: 0.0,
+            start_targets,
         });
+        self.motion_sequence = None;
+    }
+
+    pub fn set_motion_sequence_deg(&mut self, command: MotionSequenceCommand) {
+        let frames = command
+            .frames
+            .into_iter()
+            .map(|frame| MotionFrame {
+                duration_s: (frame[0].max(1.0)) / 1000.0,
+                joints: BTreeMap::from([
+                    ("right_hip".to_owned(), frame[1].to_radians()),
+                    ("right_knee".to_owned(), frame[2].to_radians()),
+                    ("left_hip".to_owned(), frame[3].to_radians()),
+                    ("left_knee".to_owned(), frame[4].to_radians()),
+                ]),
+            })
+            .collect();
+        self.motion_sequence = Some(MotionSequenceRuntime {
+            frames,
+            elapsed: 0.0,
+            start_targets: self.current_targets_map(),
+        });
+        self.gait = None;
     }
 
     pub fn clear_gait(&mut self) {
         self.gait = None;
+        self.motion_sequence = None;
     }
 
     pub fn step_for_seconds(&mut self, frame_dt: f32) {
         self.accumulator += frame_dt.max(0.0);
-        while self.accumulator >= DT {
+        while self.accumulator >= self.dt() {
             self.step_fixed();
-            self.accumulator -= DT;
+            self.accumulator -= self.dt();
         }
     }
 
@@ -546,6 +699,7 @@ impl Simulation {
         }
 
         if self.scene == SceneKind::Robot {
+            self.apply_motion_sequence_targets();
             self.apply_gait_targets();
             self.apply_servo_forces();
         }
@@ -566,10 +720,11 @@ impl Simulation {
             &(),
         );
 
-        self.time += DT;
+        self.time += self.dt();
     }
 
     fn apply_gait_targets(&mut self) {
+        let dt = self.dt();
         let Some(gait) = &mut self.gait else {
             return;
         };
@@ -577,27 +732,92 @@ impl Simulation {
             return;
         }
 
-        gait.elapsed = (gait.elapsed + DT) % gait.cycle_s;
+        gait.elapsed = (gait.elapsed + dt) % gait.cycle_s;
         let mut elapsed = 0.0;
-        let mut phase_joints = gait.phases[0].joints.clone();
-        for candidate in &gait.phases {
-            elapsed += candidate.duration.max(DT);
-            phase_joints = candidate.joints.clone();
-            if gait.elapsed <= elapsed {
+        let mut phase_index = 0usize;
+        let mut phase_start = 0.0f32;
+        for (idx, candidate) in gait.phases.iter().enumerate() {
+            let duration = candidate.duration.max(dt);
+            if gait.elapsed <= elapsed + duration {
+                phase_index = idx;
+                phase_start = elapsed;
                 break;
             }
+            elapsed += duration;
         }
+        let phase = &gait.phases[phase_index];
+        let duration = phase.duration.max(dt);
+        let alpha = ((gait.elapsed - phase_start) / duration).clamp(0.0, 1.0);
+        let start = if phase_index == 0 {
+            &gait.start_targets
+        } else {
+            &gait.phases[phase_index - 1].joints
+        };
+        let joints = interpolate_joint_map(start, &phase.joints, alpha);
         let _ = gait;
-        self.apply_pose(PoseCommand {
-            base: None,
-            joints: phase_joints,
-        });
+        self.apply_pose(PoseCommand { base: None, joints });
+    }
+
+    fn apply_motion_sequence_targets(&mut self) {
+        let dt = self.dt();
+        let Some(sequence) = &mut self.motion_sequence else {
+            return;
+        };
+        if sequence.frames.is_empty() {
+            self.motion_sequence = None;
+            return;
+        }
+
+        sequence.elapsed += dt;
+        let mut elapsed = 0.0f32;
+        let mut phase_index = 0usize;
+        let mut phase_start = 0.0f32;
+        let total_duration: f32 = sequence.frames.iter().map(|frame| frame.duration_s.max(dt)).sum();
+
+        if sequence.elapsed >= total_duration {
+            let final_joints = sequence
+                .frames
+                .last()
+                .map(|frame| frame.joints.clone())
+                .unwrap_or_default();
+            self.motion_sequence = None;
+            self.apply_pose(PoseCommand {
+                base: None,
+                joints: final_joints,
+            });
+            return;
+        }
+
+        for (idx, frame) in sequence.frames.iter().enumerate() {
+            let duration = frame.duration_s.max(dt);
+            if sequence.elapsed <= elapsed + duration {
+                phase_index = idx;
+                phase_start = elapsed;
+                break;
+            }
+            elapsed += duration;
+        }
+
+        let frame = &sequence.frames[phase_index];
+        let duration = frame.duration_s.max(dt);
+        let alpha = ((sequence.elapsed - phase_start) / duration).clamp(0.0, 1.0);
+        let start = if phase_index == 0 {
+            &sequence.start_targets
+        } else {
+            &sequence.frames[phase_index - 1].joints
+        };
+        let joints = interpolate_joint_map(start, &frame.joints, alpha);
+        let _ = sequence;
+        self.apply_pose(PoseCommand { base: None, joints });
     }
 
     fn apply_servo_forces(&mut self) {
+        let dt = self.dt();
+        let integral_limit = self.config.servo.integral_limit;
         let Some(robot) = &mut self.robot else {
             return;
         };
+        let torso_handle = robot.torso;
 
         for servo in robot.servos.values_mut() {
             let (rel_angle, rel_velocity) = match (
@@ -612,13 +832,14 @@ impl Simulation {
             };
 
             let error = normalize_angle(servo.target - rel_angle);
-            servo.integral_error = (servo.integral_error + error * DT).clamp(-10.0, 10.0);
+            servo.integral_error =
+                (servo.integral_error + error * dt).clamp(-integral_limit, integral_limit);
             let torque = (self.servo_kp * error
                 + self.servo_ki * servo.integral_error
                 - self.servo_kd * rel_velocity)
                 .clamp(-self.servo_max_torque, self.servo_max_torque);
             servo.last_torque = torque;
-            let impulse = torque * DT;
+            let impulse = torque * dt;
 
             if let Some(parent) = self.bodies.get_mut(servo.parent) {
                 parent.apply_torque_impulse(-impulse, true);
@@ -628,12 +849,12 @@ impl Simulation {
             }
         }
 
-        if let Some(torso) = self.bodies.get(robot.torso) {
+        if let Some(torso) = self.bodies.get(torso_handle) {
             let upright_torque =
                 (-TORSO_UPRIGHT_KP * torso.rotation().angle() - TORSO_UPRIGHT_KD * torso.angvel())
                     .clamp(-self.servo_max_torque, self.servo_max_torque);
-            let impulse = upright_torque * DT;
-            if let Some(torso) = self.bodies.get_mut(robot.torso) {
+            let impulse = upright_torque * dt;
+            if let Some(torso) = self.bodies.get_mut(torso_handle) {
                 torso.apply_torque_impulse(impulse, true);
             }
         }
@@ -645,6 +866,7 @@ impl Simulation {
         let mut joints = BTreeMap::new();
         let mut link_masses = BTreeMap::new();
         let mut link_lengths = BTreeMap::new();
+        let mut servo_zeros = BTreeMap::new();
 
         if let Some(robot) = &self.robot {
             for (name, servo) in &robot.servos {
@@ -671,11 +893,16 @@ impl Simulation {
                 }
             }
 
-            link_lengths.insert("torso".to_owned(), TORSO_HALF_HEIGHT * 2.0);
-            link_lengths.insert("left_thigh".to_owned(), THIGH_HALF_HEIGHT * 2.0);
-            link_lengths.insert("left_shin".to_owned(), SHIN_HALF_HEIGHT * 2.0);
-            link_lengths.insert("right_thigh".to_owned(), THIGH_HALF_HEIGHT * 2.0);
-            link_lengths.insert("right_shin".to_owned(), SHIN_HALF_HEIGHT * 2.0);
+            link_lengths.insert("torso".to_owned(), self.config.robot.torso.length);
+            link_lengths.insert("left_thigh".to_owned(), self.config.robot.thigh.length);
+            link_lengths.insert("left_shin".to_owned(), self.config.robot.shin.length);
+            link_lengths.insert("right_thigh".to_owned(), self.config.robot.thigh.length);
+            link_lengths.insert("right_shin".to_owned(), self.config.robot.shin.length);
+
+            servo_zeros.insert("right_hip".to_owned(), self.config.servo.zero_offsets.right_hip);
+            servo_zeros.insert("right_knee".to_owned(), self.config.servo.zero_offsets.right_knee);
+            servo_zeros.insert("left_hip".to_owned(), self.config.servo.zero_offsets.left_hip);
+            servo_zeros.insert("left_knee".to_owned(), self.config.servo.zero_offsets.left_knee);
         }
 
         SimulationState {
@@ -688,6 +915,7 @@ impl Simulation {
             joints,
             link_masses,
             link_lengths,
+            servo_zeros,
             contacts: ContactState {
                 left_foot: self.foot_contact(true),
                 right_foot: self.foot_contact(false),
@@ -699,12 +927,15 @@ impl Simulation {
         let Some(robot) = &self.robot else {
             return Vec::new();
         };
-        let torso_top = self.body_point(robot.torso, point![0.0, TORSO_HALF_HEIGHT]);
-        let pelvis = self.body_point(robot.torso, point![0.0, -TORSO_HALF_HEIGHT]);
-        let left_knee = self.body_point(robot.left_thigh, point![0.0, -THIGH_HALF_HEIGHT]);
-        let left_foot = self.body_point(robot.left_shin, point![0.0, -SHIN_HALF_HEIGHT]);
-        let right_knee = self.body_point(robot.right_thigh, point![0.0, -THIGH_HALF_HEIGHT]);
-        let right_foot = self.body_point(robot.right_shin, point![0.0, -SHIN_HALF_HEIGHT]);
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        let thigh_half_height = self.config.robot.thigh.length * 0.5;
+        let shin_half_height = self.config.robot.shin.length * 0.5;
+        let torso_top = self.body_point(robot.torso, point![0.0, torso_half_height]);
+        let pelvis = self.body_point(robot.torso, point![0.0, -torso_half_height]);
+        let left_knee = self.body_point(robot.left_thigh, point![0.0, -thigh_half_height]);
+        let left_foot = self.body_point(robot.left_shin, point![0.0, -shin_half_height]);
+        let right_knee = self.body_point(robot.right_thigh, point![0.0, -thigh_half_height]);
+        let right_foot = self.body_point(robot.right_shin, point![0.0, -shin_half_height]);
 
         let points = [torso_top, pelvis, left_knee, left_foot, right_knee, right_foot];
         if points.iter().any(Option::is_none) {
@@ -725,17 +956,44 @@ impl Simulation {
             return BTreeMap::new();
         };
         let mut markers = BTreeMap::new();
-        if let Some(pelvis) = self.body_point(robot.torso, point![0.0, -TORSO_HALF_HEIGHT]) {
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        let thigh_half_height = self.config.robot.thigh.length * 0.5;
+        if let Some(pelvis) = self.body_point(robot.torso, point![0.0, -torso_half_height]) {
             markers.insert("left_hip".to_owned(), [pelvis[0] - 0.05, pelvis[1]]);
             markers.insert("right_hip".to_owned(), [pelvis[0] + 0.05, pelvis[1]]);
         }
-        if let Some(left_knee) = self.body_point(robot.left_thigh, point![0.0, -THIGH_HALF_HEIGHT]) {
+        if let Some(left_knee) = self.body_point(robot.left_thigh, point![0.0, -thigh_half_height]) {
             markers.insert("left_knee".to_owned(), left_knee);
         }
-        if let Some(right_knee) = self.body_point(robot.right_thigh, point![0.0, -THIGH_HALF_HEIGHT]) {
+        if let Some(right_knee) = self.body_point(robot.right_thigh, point![0.0, -thigh_half_height]) {
             markers.insert("right_knee".to_owned(), right_knee);
         }
         markers
+    }
+
+    pub fn robot_center_of_mass(&self) -> Option<[f32; 2]> {
+        let robot = self.robot.as_ref()?;
+        let handles = [
+            robot.torso,
+            robot.left_thigh,
+            robot.left_shin,
+            robot.right_thigh,
+            robot.right_shin,
+        ];
+        let mut mass_sum = 0.0f32;
+        let mut weighted = vector![0.0f32, 0.0f32];
+        for handle in handles {
+            let body = self.bodies.get(handle)?;
+            let mass = body.mass();
+            let pos = body.translation();
+            weighted += vector![pos.x * mass, pos.y * mass];
+            mass_sum += mass;
+        }
+        if mass_sum <= f32::EPSILON {
+            None
+        } else {
+            Some([weighted.x / mass_sum, weighted.y / mass_sum])
+        }
     }
 
     fn body_point(&self, handle: RigidBodyHandle, local: Point<Real>) -> Option<[f32; 2]> {
@@ -796,6 +1054,87 @@ impl Simulation {
         }
         targets
     }
+
+    fn current_targets_map(&self) -> BTreeMap<String, f32> {
+        let mut joints = BTreeMap::new();
+        let targets = self.current_targets();
+        if let Some(value) = targets.right_hip {
+            joints.insert("right_hip".to_owned(), value);
+        }
+        if let Some(value) = targets.right_knee {
+            joints.insert("right_knee".to_owned(), value);
+        }
+        if let Some(value) = targets.left_hip {
+            joints.insert("left_hip".to_owned(), value);
+        }
+        if let Some(value) = targets.left_knee {
+            joints.insert("left_knee".to_owned(), value);
+        }
+        joints
+    }
+
+    fn sync_runtime_settings_into_config(&mut self) {
+        let targets = self.current_targets();
+        self.config.servo.kp = self.servo_kp;
+        self.config.servo.ki = self.servo_ki;
+        self.config.servo.kd = self.servo_kd;
+        self.config.servo.max_torque = self.servo_max_torque;
+        if let Some(robot) = &self.robot {
+            if let Some(body) = self.body_state(robot.torso) {
+                self.config.robot.initial_pose.torso = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.left_thigh) {
+                self.config.robot.initial_pose.left_thigh = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.left_shin) {
+                self.config.robot.initial_pose.left_shin = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.right_thigh) {
+                self.config.robot.initial_pose.right_thigh = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.right_shin) {
+                self.config.robot.initial_pose.right_shin = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+        }
+        self.config.servo.initial_targets = JointAnglesConfig {
+            right_hip: targets
+                .right_hip
+                .unwrap_or(self.config.servo.initial_targets.right_hip),
+            right_knee: targets
+                .right_knee
+                .unwrap_or(self.config.servo.initial_targets.right_knee),
+            left_hip: targets
+                .left_hip
+                .unwrap_or(self.config.servo.initial_targets.left_hip),
+            left_knee: targets
+                .left_knee
+                .unwrap_or(self.config.servo.initial_targets.left_knee),
+        };
+    }
+
+    fn dt(&self) -> f32 {
+        self.integration_parameters.dt
+    }
 }
 
 impl JointServo {
@@ -810,6 +1149,20 @@ impl JointServo {
     }
 }
 
+fn interpolate_joint_map(
+    start: &BTreeMap<String, f32>,
+    end: &BTreeMap<String, f32>,
+    alpha: f32,
+) -> BTreeMap<String, f32> {
+    let mut joints = BTreeMap::new();
+    for name in ["right_hip", "right_knee", "left_hip", "left_knee"] {
+        let start_value = start.get(name).copied().unwrap_or_default();
+        let end_value = end.get(name).copied().unwrap_or(start_value);
+        joints.insert(name.to_owned(), start_value + (end_value - start_value) * alpha);
+    }
+    joints
+}
+
 fn normalize_angle(angle: f32) -> f32 {
     let mut wrapped = angle;
     while wrapped > std::f32::consts::PI {
@@ -821,9 +1174,6 @@ fn normalize_angle(angle: f32) -> f32 {
     wrapped
 }
 
-fn clamp_joint_target(joint: JointName, angle: f32) -> f32 {
-    match joint {
-        JointName::RightHip | JointName::LeftHip => angle.clamp(-1.0, 1.0),
-        JointName::RightKnee | JointName::LeftKnee => angle.clamp(0.05, 1.9),
-    }
+fn clamp_joint_target(_joint: JointName, angle: f32) -> f32 {
+    angle.clamp(-std::f32::consts::PI, std::f32::consts::PI)
 }

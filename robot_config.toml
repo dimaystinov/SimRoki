@@ -1,0 +1,75 @@
+[physics]
+gravity_y = -9.8100004196167
+dt = 0.008333333767950535
+ground_half_width = 5000.0
+ground_friction = 1.350000023841858
+ground_restitution = 0.0
+
+[robot]
+suspend_clearance = 1.2849290370941162
+
+[robot.torso]
+length = 0.6800000071525574
+width = 0.09000000357627869
+mass = 0.3182400166988373
+friction = 1.0
+
+[robot.thigh]
+length = 0.46000000834465027
+width = 0.09000000357627869
+mass = 0.14076001942157745
+friction = 1.0
+
+[robot.shin]
+length = 0.5
+width = 0.09000000357627869
+mass = 0.12600000202655792
+friction = 1.2000000476837158
+
+[robot.body_dynamics]
+angular_damping = 0.8500000238418579
+linear_damping = 0.07999999821186066
+
+[robot.initial_pose.torso]
+x = 261.1326599121094
+y = 0.723759114742279
+angle = -0.044158484786748886
+
+[robot.initial_pose.left_thigh]
+x = 261.3445739746094
+y = 0.4291573464870453
+angle = 1.7670902013778687
+
+[robot.initial_pose.left_shin]
+x = 261.6695251464844
+y = 0.24456742405891418
+angle = 0.4085896909236908
+
+[robot.initial_pose.right_thigh]
+x = 260.89324951171875
+y = 0.43485140800476074
+angle = -1.7946749925613403
+
+[robot.initial_pose.right_shin]
+x = 260.5891418457031
+y = 0.24885740876197815
+angle = -0.3253740668296814
+
+[servo]
+kp = 20.0
+ki = 3.1205673217773438
+kd = 0.326241135597229
+max_torque = 18.148937225341797
+integral_limit = 10.0
+
+[servo.zero_offsets]
+right_hip = -1.8392802476882935
+right_knee = 1.3800795078277588
+left_hip = 1.8557238578796387
+left_knee = -1.2691965103149414
+
+[servo.initial_targets]
+right_hip = -1.7501569986343384
+right_knee = 1.4692027568817139
+left_hip = 1.8111622333526611
+left_knee = -1.3583195209503174
