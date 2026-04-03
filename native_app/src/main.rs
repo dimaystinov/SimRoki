@@ -13,6 +13,7 @@ use sim_core::{
     Simulation, SimulationConfig, SimulationState,
 };
 use std::{
+    fs,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -32,9 +33,14 @@ const GRID_MAJOR_EVERY: i32 = 4;
 const GROUND_Y: f32 = 0.0;
 const PANEL_WIDTH: f32 = 440.0;
 const CONFIG_PATH: &str = "robot_config.toml";
+const MOTION_JSON_PATH: &str = "motion_sequence.json";
 
 type SharedSimulation = Arc<Mutex<Simulation>>;
 type SharedExternalControl = Arc<Mutex<ExternalControlState>>;
+
+struct AppFonts {
+    cyrillic: Option<Font>,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -79,6 +85,16 @@ struct ControlPanelState {
     suspend_height: f32,
     motion_frame_ms: f32,
     motion_frames: Vec<[f32; 5]>,
+    motion_json: String,
+    motion_loop: bool,
+    motion_repeat_delay_ms: f32,
+    robofest_active: bool,
+    robofest_start_time: f32,
+    robofest_elapsed_time: f32,
+    robofest_finish_x: Option<f32>,
+    robofest_robot_reached: bool,
+    robofest_ball_reached: bool,
+    robofest_result_message: Option<String>,
     initialized: bool,
 }
 
@@ -128,6 +144,9 @@ async fn main() {
 
     let sim = Arc::new(Mutex::new(load_simulation()));
     let external_control = Arc::new(Mutex::new(ExternalControlState::default()));
+    let fonts = AppFonts {
+        cyrillic: load_ttf_font("C:/Windows/Fonts/arial.ttf").await.ok(),
+    };
     let mut view = ViewState {
         zoom: 1.0,
         zoom_target: 1.0,
@@ -143,7 +162,8 @@ async fn main() {
         clear_background(color_u8!(244, 241, 234, 255));
         handle_keyboard(&sim);
         update_view(&mut view, &sim);
-        draw_world(&sim, &view);
+        update_robofest_state(&sim, &mut controls);
+        draw_world(&sim, &view, &controls, &fonts);
         draw_control_panel(&sim, &external_control, &mut controls);
         if let Ok(mut sim) = sim.lock() {
             sim.step_for_seconds(get_frame_time());
@@ -312,16 +332,15 @@ async fn set_motion_sequence_deg(
 ) -> Result<Json<OkResponse>, AppError> {
     mark_external_control(&state.external_control);
     let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
-    sim.set_motion_sequence_deg(MotionSequenceCommand { frames: sequence });
+    sim.set_motion_sequence_deg(MotionSequenceCommand {
+        frames: sequence,
+        loop_enabled: false,
+        repeat_delay_ms: 0.0,
+    });
     Ok(Json(OkResponse { ok: true }))
 }
 
 fn handle_keyboard(sim: &SharedSimulation) {
-    if is_key_pressed(KeyCode::Space) {
-        if let Ok(mut sim) = sim.lock() {
-            sim.toggle_pause();
-        }
-    }
     if is_key_pressed(KeyCode::R) {
         if let Ok(mut sim) = sim.lock() {
             sim.reset_robot();
@@ -330,16 +349,6 @@ fn handle_keyboard(sim: &SharedSimulation) {
     if is_key_pressed(KeyCode::B) {
         if let Ok(mut sim) = sim.lock() {
             sim.reset_ball();
-        }
-    }
-    if is_key_pressed(KeyCode::Key1) {
-        if let Ok(mut sim) = sim.lock() {
-            sim.set_scene(SceneKind::Robot);
-        }
-    }
-    if is_key_pressed(KeyCode::Key2) {
-        if let Ok(mut sim) = sim.lock() {
-            sim.set_scene(SceneKind::Ball);
         }
     }
 }
@@ -362,7 +371,7 @@ fn update_view(view: &mut ViewState, sim: &SharedSimulation) {
     }
     view.last_mouse = mouse;
 
-    if is_key_pressed(KeyCode::F) {
+    if is_key_pressed(KeyCode::F) || is_key_pressed(KeyCode::Space) {
         view.follow_robot = true;
     }
 
@@ -401,7 +410,12 @@ fn normalize_wheel_delta(raw_wheel: f32) -> f32 {
     }
 }
 
-fn draw_world(sim: &SharedSimulation, view: &ViewState) {
+fn draw_world(
+    sim: &SharedSimulation,
+    view: &ViewState,
+    controls: &ControlPanelState,
+    fonts: &AppFonts,
+) {
     let state = {
         let Ok(sim) = sim.lock() else {
             return;
@@ -410,11 +424,14 @@ fn draw_world(sim: &SharedSimulation, view: &ViewState) {
     };
 
     draw_grid(view);
+    if let Some(finish_x) = controls.robofest_finish_x {
+        draw_finish_line(finish_x, view);
+    }
     match state.scene {
         SceneKind::Ball => draw_ball_scene(&state, view),
         SceneKind::Robot => draw_robot_scene(sim, &state, view),
     }
-    draw_overlay(&state, view);
+    draw_overlay(&state, view, controls, fonts);
 }
 
 fn draw_control_panel(
@@ -501,27 +518,76 @@ fn draw_control_panel(
         }
         if ui.button(None, "Add frame from sliders") {
             controls.motion_frames.push(current_motion_frame(controls));
+            sync_motion_json_from_frames(controls);
         }
         if ui.button(None, "Replace last frame") {
             let frame = current_motion_frame(controls);
             if let Some(last) = controls.motion_frames.last_mut() {
                 *last = frame;
+                sync_motion_json_from_frames(controls);
             }
         }
         if ui.button(None, "Remove last frame") {
             let _ = controls.motion_frames.pop();
+            sync_motion_json_from_frames(controls);
         }
         if ui.button(None, "Clear motion") {
             controls.motion_frames.clear();
+            sync_motion_json_from_frames(controls);
         }
         if ui.button(None, "Play motion") {
-            if !controls.motion_frames.is_empty() {
+            if apply_motion_json_to_frames(controls).is_ok() && !controls.motion_frames.is_empty() {
                 if let Ok(mut sim) = sim.lock() {
                     sim.clear_gait();
                     sim.set_motion_sequence_deg(MotionSequenceCommand {
                         frames: controls.motion_frames.clone(),
+                        loop_enabled: controls.motion_loop,
+                        repeat_delay_ms: controls.motion_repeat_delay_ms,
                     });
                 }
+            }
+        }
+        if ui.button(None, "Start ROBOFEST 2026") {
+            if apply_motion_json_to_frames(controls).is_ok() && !controls.motion_frames.is_empty() {
+                if let Ok(mut sim) = sim.lock() {
+                    sim.reset_robot();
+                    sim.resume();
+                    sim.clear_gait();
+                    sim.set_motion_sequence_deg(MotionSequenceCommand {
+                        frames: controls.motion_frames.clone(),
+                        loop_enabled: false,
+                        repeat_delay_ms: 0.0,
+                    });
+                    let fresh_state = sim.state();
+                    let start_x = fresh_state.base.as_ref().map(|base| base.x).unwrap_or(0.0);
+                    controls.robofest_active = true;
+                    controls.robofest_start_time = fresh_state.time;
+                    controls.robofest_elapsed_time = 0.0;
+                    controls.robofest_finish_x = Some(start_x + 100.0);
+                    controls.robofest_robot_reached = false;
+                    controls.robofest_ball_reached = false;
+                    controls.robofest_result_message = None;
+                    controls.sync_from_state(&fresh_state);
+                }
+            }
+        }
+        if ui.button(None, "Save JSON") {
+            let _ = apply_motion_json_to_frames(controls);
+            if let Err(err) = fs::write(MOTION_JSON_PATH, &controls.motion_json) {
+                error!("failed to save motion json: {err}");
+            } else {
+                info!("saved motion json to {MOTION_JSON_PATH}");
+            }
+        }
+        if ui.button(None, "Load JSON") {
+            match fs::read_to_string(MOTION_JSON_PATH) {
+                Ok(text) => {
+                    controls.motion_json = text;
+                    if let Err(err) = apply_motion_json_to_frames(controls) {
+                        error!("failed to parse loaded motion json: {err}");
+                    }
+                }
+                Err(err) => error!("failed to load motion json: {err}"),
             }
         }
         if ui.button(None, "Use current pose as zero") {
@@ -581,19 +647,19 @@ fn draw_control_panel(
         ui.label(None, "Debug info");
         ui.label(None, "Motion editor");
         slider_row(ui, "frame_ms", &mut controls.motion_frame_ms, 20.0..3000.0);
+        ui.label(None, "Loop motion");
+        widgets::Checkbox::new(hash!("motion_loop")).ui(ui, &mut controls.motion_loop);
+        slider_row(
+            ui,
+            "repeat_delay_ms",
+            &mut controls.motion_repeat_delay_ms,
+            0.0..5000.0,
+        );
         ui.label(
             None,
             "frame format: [time_ms, servo1, servo2, servo3, servo4] in degrees",
         );
-        for (idx, frame) in controls.motion_frames.iter().enumerate() {
-            ui.label(
-                None,
-                &format!(
-                    "#{idx}: [{:.0}, {:.1}, {:.1}, {:.1}, {:.1}]",
-                    frame[0], frame[1], frame[2], frame[3], frame[4]
-                ),
-            );
-        }
+        ui.editbox(hash!("motion_json_editbox"), vec2(PANEL_WIDTH - 36.0, 180.0), &mut controls.motion_json);
         ui.separator();
         ui.label(None, &format!("L foot: {}", state.contacts.left_foot));
         ui.label(None, &format!("R foot: {}", state.contacts.right_foot));
@@ -674,6 +740,36 @@ fn apply_controls(sim: &SharedSimulation, controls: &ControlPanelState) {
     }
 }
 
+fn update_robofest_state(sim: &SharedSimulation, controls: &mut ControlPanelState) {
+    let state = {
+        let Ok(sim) = sim.lock() else {
+            return;
+        };
+        sim.state()
+    };
+
+    let Some(finish_x) = controls.robofest_finish_x else {
+        return;
+    };
+
+    controls.robofest_elapsed_time = (state.time - controls.robofest_start_time).max(0.0);
+    controls.robofest_robot_reached = state.base.as_ref().map(|base| base.x >= finish_x).unwrap_or(false);
+    controls.robofest_ball_reached = state.ball.as_ref().map(|ball| ball.x >= finish_x).unwrap_or(false);
+
+    if controls.robofest_active && controls.robofest_robot_reached {
+        controls.robofest_active = false;
+        let ball_status = if controls.robofest_ball_reached {
+            "мяч: да (+10 баллов)"
+        } else {
+            "мяч: нет (+0 баллов)"
+        };
+        controls.robofest_result_message = Some(format!(
+            "Поздравляем! Время: {:.2} с | {ball_status}",
+            controls.robofest_elapsed_time
+        ));
+    }
+}
+
 fn current_motion_frame(controls: &ControlPanelState) -> [f32; 5] {
     [
         controls.motion_frame_ms.max(1.0),
@@ -682,6 +778,37 @@ fn current_motion_frame(controls: &ControlPanelState) -> [f32; 5] {
         (controls.left_hip_zero + controls.left_hip).to_degrees(),
         (controls.left_knee_zero + controls.left_knee).to_degrees(),
     ]
+}
+
+fn sync_motion_json_from_frames(controls: &mut ControlPanelState) {
+    controls.motion_json = format_motion_frames_json(&controls.motion_frames);
+}
+
+fn apply_motion_json_to_frames(controls: &mut ControlPanelState) -> Result<(), String> {
+    let frames: Vec<[f32; 5]> = serde_json::from_str(&controls.motion_json)
+        .map_err(|err| format!("invalid motion json: {err}"))?;
+    controls.motion_frames = frames;
+    controls.motion_json = format_motion_frames_json(&controls.motion_frames);
+    Ok(())
+}
+
+fn format_motion_frames_json(frames: &[[f32; 5]]) -> String {
+    if frames.is_empty() {
+        return "[]".to_owned();
+    }
+
+    let lines = frames
+        .iter()
+        .map(|frame| {
+            format!(
+                "  [{:.1}, {:.5}, {:.5}, {:.5}, {:.5}]",
+                frame[0], frame[1], frame[2], frame[3], frame[4]
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    format!("[\n{}\n]", lines)
 }
 
 fn draw_grid(view: &ViewState) {
@@ -784,16 +911,44 @@ fn draw_grid(view: &ViewState) {
     );
 }
 
+fn draw_finish_line(finish_x: f32, view: &ViewState) {
+    let half_h = screen_height() * 0.5 / (PIXELS_PER_METER * view.zoom);
+    let top = view.focus.y + half_h;
+    let bottom = view.focus.y - half_h;
+    let a = world_to_screen(vec2(finish_x, bottom), view);
+    let b = world_to_screen(vec2(finish_x, top), view);
+    let line_color = color_u8!(236, 127, 43, 255);
+    draw_line(a.x, a.y, b.x, b.y, 4.0, line_color);
+    draw_text(
+        "100 m",
+        a.x + 8.0,
+        (b.y + 28.0).max(24.0),
+        24.0,
+        line_color,
+    );
+}
+
 fn draw_ball_scene(state: &SimulationState, view: &ViewState) {
     if let Some(ball) = &state.ball {
-        let center = world_to_screen(vec2(ball.x, ball.y), view);
-        draw_circle(
-            center.x,
-            center.y,
-            0.5 * PIXELS_PER_METER * view.zoom,
-            color_u8!(222, 104, 89, 255),
-        );
+        draw_ball_body(ball, 0.5, view);
     }
+}
+
+fn draw_ball_body(ball: &sim_core::BodyState, radius_m: f32, view: &ViewState) {
+    let center = world_to_screen(vec2(ball.x, ball.y), view);
+    draw_circle(
+        center.x,
+        center.y,
+        radius_m * PIXELS_PER_METER * view.zoom,
+        color_u8!(222, 104, 89, 255),
+    );
+    draw_circle_lines(
+        center.x,
+        center.y,
+        radius_m * PIXELS_PER_METER * view.zoom,
+        2.0,
+        color_u8!(130, 55, 45, 255),
+    );
 }
 
 fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &ViewState) {
@@ -808,6 +963,10 @@ fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &Vie
             sim.state(),
         )
     };
+
+    if let Some(ball) = &state.ball {
+        draw_ball_body(ball, 0.2, view);
+    }
 
     for (idx, segment) in segments.iter().enumerate() {
         let a = world_to_screen(vec2(segment.0[0], segment.0[1]), view);
@@ -862,7 +1021,12 @@ fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &Vie
     }
 }
 
-fn draw_overlay(state: &SimulationState, view: &ViewState) {
+fn draw_overlay(
+    state: &SimulationState,
+    view: &ViewState,
+    controls: &ControlPanelState,
+    fonts: &AppFonts,
+) {
     draw_rectangle(24.0, 24.0, 430.0, 480.0, Color::new(1.0, 1.0, 1.0, 0.9));
     let title = match state.scene {
         SceneKind::Robot => "Robot mode",
@@ -932,15 +1096,89 @@ fn draw_overlay(state: &SimulationState, view: &ViewState) {
     );
     draw_text(
         if view.follow_robot {
-            "wheel zoom, drag pan, F free/follow reset, Space pause, R reset"
+            "wheel zoom, drag pan, F/Space center robot, R reset"
         } else {
-            "wheel zoom, drag pan, F recenter robot, Space pause, R reset"
+            "wheel zoom, drag pan, F/Space recenter robot, R reset"
         },
         40.0,
         y + 28.0,
         18.0,
         color_u8!(103, 110, 121, 255),
     );
+
+    let status_y = y + 58.0;
+    if controls.robofest_finish_x.is_some() {
+        draw_text(
+            &format!(
+                "ROBOFEST 2026: {:.2}s | robot={} | ball={}",
+                controls.robofest_elapsed_time,
+                controls.robofest_robot_reached,
+                controls.robofest_ball_reached
+            ),
+            40.0,
+            status_y,
+            20.0,
+            color_u8!(57, 62, 70, 255),
+        );
+    }
+
+    if let Some(message) = &controls.robofest_result_message {
+        let box_w = 560.0;
+        let box_h = 140.0;
+        let x = (screen_width() - box_w) * 0.5;
+        let y = 48.0;
+        draw_rectangle(x, y, box_w, box_h, Color::new(1.0, 0.98, 0.91, 0.95));
+        draw_rectangle_lines(x, y, box_w, box_h, 3.0, color_u8!(220, 146, 42, 255));
+        draw_text_with_optional_font(
+            "ROBOFEST 2026",
+            x + 20.0,
+            y + 36.0,
+            34,
+            color_u8!(125, 72, 16, 255),
+            fonts.cyrillic.as_ref(),
+        );
+        draw_text_with_optional_font(
+            message,
+            x + 20.0,
+            y + 78.0,
+            24,
+            color_u8!(78, 54, 24, 255),
+            fonts.cyrillic.as_ref(),
+        );
+        draw_text_with_optional_font(
+            "Нажмите Start для новой попытки",
+            x + 20.0,
+            y + 112.0,
+            22,
+            color_u8!(98, 79, 52, 255),
+            fonts.cyrillic.as_ref(),
+        );
+    }
+}
+
+fn draw_text_with_optional_font(
+    text: &str,
+    x: f32,
+    y: f32,
+    font_size: u16,
+    color: Color,
+    font: Option<&Font>,
+) {
+    if let Some(font) = font {
+        draw_text_ex(
+            text,
+            x,
+            y,
+            TextParams {
+                font: Some(font),
+                font_size,
+                color,
+                ..Default::default()
+            },
+        );
+    } else {
+        draw_text(text, x, y, font_size as f32, color);
+    }
 }
 
 fn world_to_screen(world: Vec2, view: &ViewState) -> Vec2 {
@@ -971,6 +1209,16 @@ impl Default for ControlPanelState {
             suspend_height: 0.8,
             motion_frame_ms: 300.0,
             motion_frames: Vec::new(),
+            motion_json: "[]".to_owned(),
+            motion_loop: false,
+            motion_repeat_delay_ms: 0.0,
+            robofest_active: false,
+            robofest_start_time: 0.0,
+            robofest_elapsed_time: 0.0,
+            robofest_finish_x: None,
+            robofest_robot_reached: false,
+            robofest_ball_reached: false,
+            robofest_result_message: None,
             initialized: false,
         }
     }

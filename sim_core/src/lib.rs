@@ -13,8 +13,23 @@ pub use config::{
 const TORSO_UPRIGHT_KP: f32 = 0.0;
 const TORSO_UPRIGHT_KD: f32 = 0.0;
 const GROUP_GROUND: Group = Group::GROUP_1;
-const GROUP_ROBOT: Group = Group::GROUP_2;
-const GROUP_BALL: Group = Group::GROUP_3;
+const GROUP_LEFT_LEG: Group = Group::GROUP_2;
+const GROUP_RIGHT_LEG: Group = Group::GROUP_3;
+const GROUP_TORSO: Group = Group::GROUP_4;
+const GROUP_BALL: Group = Group::GROUP_5;
+const GROUP_ENVIRONMENT: Group = Group::GROUP_6;
+const ROBOT_BALL_RADIUS_M: f32 = 0.2;
+const ROBOT_BALL_MASS_KG: f32 = 0.1;
+const ROBOT_BALL_OFFSET_X_M: f32 = 0.7;
+const ROBOT_BALL_CLEARANCE_Y_M: f32 = 0.02;
+
+fn all_robot_groups() -> Group {
+    GROUP_LEFT_LEG | GROUP_RIGHT_LEG | GROUP_TORSO
+}
+
+fn robot_world_filter() -> Group {
+    GROUP_GROUND | GROUP_BALL | GROUP_ENVIRONMENT
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +172,10 @@ pub struct GaitPhase {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MotionSequenceCommand {
     pub frames: Vec<[f32; 5]>,
+    #[serde(default)]
+    pub loop_enabled: bool,
+    #[serde(default)]
+    pub repeat_delay_ms: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -193,6 +212,9 @@ struct MotionSequenceRuntime {
     frames: Vec<MotionFrame>,
     elapsed: f32,
     start_targets: BTreeMap<String, f32>,
+    loop_enabled: bool,
+    repeat_delay_s: f32,
+    delay_remaining_s: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -258,23 +280,7 @@ impl Simulation {
     pub fn new_ball_with_config(config: SimulationConfig) -> Self {
         let mut sim = Self::empty(SceneKind::Ball, config);
         sim.spawn_ground();
-
-        let body = RigidBodyBuilder::dynamic()
-            .translation(vector![0.0, 5.0])
-            .additional_mass(1.0)
-            .build();
-        let handle = sim.bodies.insert(body);
-        let collider = ColliderBuilder::ball(0.5)
-            .collision_groups(InteractionGroups::new(
-                GROUP_BALL,
-                GROUP_GROUND | GROUP_BALL,
-            ))
-            .friction(0.85)
-            .restitution(0.1)
-            .build();
-        sim.colliders
-            .insert_with_parent(collider, handle, &mut sim.bodies);
-        sim.ball = Some(handle);
+        sim.spawn_ball(vector![0.0, 5.0], 0.5, 1.0);
         sim
     }
 
@@ -291,6 +297,7 @@ impl Simulation {
         sim.robot_suspended = suspended;
         sim.spawn_ground();
         sim.spawn_robot();
+        sim.spawn_robot_ball();
         sim
     }
 
@@ -338,13 +345,59 @@ impl Simulation {
             ColliderBuilder::cuboid(self.config.physics.ground_half_width, 0.1)
                 .collision_groups(InteractionGroups::new(
                     GROUP_GROUND,
-                    GROUP_GROUND | GROUP_ROBOT | GROUP_BALL,
+                    all_robot_groups() | GROUP_BALL | GROUP_ENVIRONMENT,
                 ))
                 .friction(self.config.physics.ground_friction)
                 .restitution(self.config.physics.ground_restitution)
                 .build(),
             ground,
             &mut self.bodies,
+        );
+    }
+
+    fn spawn_ball(&mut self, translation: Vector<Real>, radius: f32, mass: f32) {
+        let area = std::f32::consts::PI * radius * radius;
+        let density = if area > f32::EPSILON {
+            mass.max(0.0001) / area
+        } else {
+            1.0
+        };
+        let handle = self.bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(translation)
+                .angular_damping(0.2)
+                .linear_damping(0.05)
+                .build(),
+        );
+        let collider = ColliderBuilder::ball(radius)
+            .collision_groups(InteractionGroups::new(
+                GROUP_BALL,
+                all_robot_groups() | GROUP_GROUND | GROUP_BALL | GROUP_ENVIRONMENT,
+            ))
+            .density(density)
+            .friction(0.85)
+            .restitution(0.1)
+            .build();
+        self.colliders
+            .insert_with_parent(collider, handle, &mut self.bodies);
+        self.ball = Some(handle);
+    }
+
+    fn spawn_robot_ball(&mut self) {
+        let pose = &self.config.robot.initial_pose;
+        let rightmost_x = pose
+            .torso
+            .x
+            .max(pose.left_thigh.x)
+            .max(pose.left_shin.x)
+            .max(pose.right_thigh.x)
+            .max(pose.right_shin.x);
+        let ball_x = rightmost_x + ROBOT_BALL_OFFSET_X_M;
+        let ball_y = ROBOT_BALL_RADIUS_M + ROBOT_BALL_CLEARANCE_Y_M;
+        self.spawn_ball(
+            vector![ball_x, ball_y],
+            ROBOT_BALL_RADIUS_M,
+            ROBOT_BALL_MASS_KG,
         );
     }
 
@@ -362,6 +415,8 @@ impl Simulation {
             torso_half_height,
             self.config.robot.torso.mass,
             self.config.robot.torso.friction,
+            GROUP_TORSO,
+            robot_world_filter(),
         );
         let (left_thigh, _) = self.spawn_box(
             vector![pose.left_thigh.x, pose.left_thigh.y],
@@ -370,6 +425,8 @@ impl Simulation {
             thigh_half_height,
             self.config.robot.thigh.mass,
             self.config.robot.thigh.friction,
+            GROUP_LEFT_LEG,
+            GROUP_LEFT_LEG | robot_world_filter(),
         );
         let (left_shin, left_shin_collider) = self.spawn_box(
             vector![pose.left_shin.x, pose.left_shin.y],
@@ -378,6 +435,8 @@ impl Simulation {
             shin_half_height,
             self.config.robot.shin.mass,
             self.config.robot.shin.friction,
+            GROUP_LEFT_LEG,
+            GROUP_LEFT_LEG | robot_world_filter(),
         );
         let (right_thigh, _) = self.spawn_box(
             vector![pose.right_thigh.x, pose.right_thigh.y],
@@ -386,6 +445,8 @@ impl Simulation {
             thigh_half_height,
             self.config.robot.thigh.mass,
             self.config.robot.thigh.friction,
+            GROUP_RIGHT_LEG,
+            GROUP_RIGHT_LEG | robot_world_filter(),
         );
         let (right_shin, right_shin_collider) = self.spawn_box(
             vector![pose.right_shin.x, pose.right_shin.y],
@@ -394,6 +455,8 @@ impl Simulation {
             shin_half_height,
             self.config.robot.shin.mass,
             self.config.robot.shin.friction,
+            GROUP_RIGHT_LEG,
+            GROUP_RIGHT_LEG | robot_world_filter(),
         );
 
         self.insert_revolute(
@@ -466,6 +529,8 @@ impl Simulation {
         half_y: f32,
         mass: f32,
         friction: f32,
+        membership: Group,
+        filter: Group,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let area = (half_x * 2.0) * (half_y * 2.0);
         let density = if area > f32::EPSILON {
@@ -484,8 +549,8 @@ impl Simulation {
         let collider = self.colliders.insert_with_parent(
             ColliderBuilder::cuboid(half_x, half_y)
                 .collision_groups(InteractionGroups::new(
-                    GROUP_ROBOT,
-                    GROUP_GROUND | GROUP_ROBOT,
+                    membership,
+                    filter,
                 ))
                 .density(density)
                 .friction(friction)
@@ -513,7 +578,13 @@ impl Simulation {
     }
 
     pub fn reset_ball(&mut self) {
-        *self = Self::new_ball_with_config(self.config.clone());
+        *self = match self.scene {
+            SceneKind::Ball => Self::new_ball_with_config(self.config.clone()),
+            SceneKind::Robot => Self::new_robot_with_config_and_suspension(
+                self.config.clone(),
+                self.robot_suspended,
+            ),
+        };
     }
 
     pub fn reset_robot(&mut self) {
@@ -676,6 +747,9 @@ impl Simulation {
             frames,
             elapsed: 0.0,
             start_targets: self.current_targets_map(),
+            loop_enabled: command.loop_enabled,
+            repeat_delay_s: (command.repeat_delay_ms.max(0.0)) / 1000.0,
+            delay_remaining_s: 0.0,
         });
         self.gait = None;
     }
@@ -780,11 +854,22 @@ impl Simulation {
                 .last()
                 .map(|frame| frame.joints.clone())
                 .unwrap_or_default();
-            self.motion_sequence = None;
-            self.apply_pose(PoseCommand {
-                base: None,
-                joints: final_joints,
-            });
+            if sequence.loop_enabled {
+                sequence.elapsed = 0.0;
+                sequence.delay_remaining_s = sequence.repeat_delay_s;
+                sequence.start_targets = final_joints.clone();
+            } else {
+                self.motion_sequence = None;
+                self.apply_pose(PoseCommand {
+                    base: None,
+                    joints: final_joints,
+                });
+                return;
+            }
+        }
+
+        if sequence.delay_remaining_s > 0.0 {
+            sequence.delay_remaining_s = (sequence.delay_remaining_s - dt).max(0.0);
             return;
         }
 
