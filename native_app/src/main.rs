@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sim_core::{
     GaitCommand, JointCommand, MotionSequenceCommand, PoseCommand, RlObservation, RlStepCommand,
     RlStepResult, RlResetCommand, SceneKind, ServoTargets, Simulation, SimulationConfig,
-    SimulationState, WalkDirectionCommand,
+    SimulationState, WalkConfigCommand, WalkDirectionCommand,
 };
 use std::{
     fs,
@@ -168,8 +168,13 @@ async fn main() {
         update_robofest_state(&sim, &mut controls);
         draw_world(&sim, &view, &controls, &fonts);
         draw_control_panel(&sim, &external_control, &mut controls);
-        if let Ok(mut sim) = sim.lock() {
-            sim.step_for_seconds(get_frame_time());
+        let allow_frame_stepping = !external_control_active(&external_control);
+        if allow_frame_stepping {
+            if let Ok(mut sim) = sim.lock() {
+                sim.step_for_seconds(get_frame_time());
+            }
+        } else if let Ok(sim) = sim.lock() {
+            let _ = sim.state();
         }
         next_frame().await;
     }
@@ -225,6 +230,7 @@ async fn run_server(sim: SharedSimulation, external_control: SharedExternalContr
         .route("/rl/observation", get(rl_observation))
         .route("/rl/step", post(rl_step))
         .route("/walk/direction", post(set_walk_direction))
+        .route("/walk/config", post(set_walk_config))
         .with_state(AppState { sim, external_control });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -364,9 +370,22 @@ async fn set_walk_direction(
     mark_external_control(&state.external_control);
     let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
     sim.set_target_direction(command.direction);
+    if let Some(speed_mps) = command.speed_mps {
+        sim.set_walk_target_speed(speed_mps);
+    }
     if let Some(enabled) = command.enabled {
         sim.set_directional_walk_enabled(enabled);
     }
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn set_walk_config(
+    State(state): State<AppState>,
+    Json(command): Json<WalkConfigCommand>,
+) -> Result<Json<OkResponse>, AppError> {
+    mark_external_control(&state.external_control);
+    let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
+    sim.update_walk_config(command);
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -559,7 +578,7 @@ fn draw_control_panel(
         changed |= slider_row(ui, "kp", &mut controls.servo_kp, -20.0..20.0);
         changed |= slider_row(ui, "ki", &mut controls.servo_ki, -5.0..5.0);
         changed |= slider_row(ui, "kd", &mut controls.servo_kd, -1.0..1.0);
-        changed |= slider_row(ui, "max_torque", &mut controls.servo_max_torque, 0.5..40.0);
+        changed |= slider_row(ui, "max_torque", &mut controls.servo_max_torque, 0.1..10.0);
         ui.separator();
         ui.label(None, "Suspend point");
         suspend_changed = slider_row(ui, "suspend_height", &mut controls.suspend_height, 0.05..1.8);
@@ -731,9 +750,11 @@ fn draw_control_panel(
         ui.label(
             None,
             &format!(
-                "walk: {} | dir: {}",
+                "walk: {} | dir: {} | speed: {:.2}/{:.2} m/s",
                 state.walk_enabled,
-                if state.walk_direction >= 0.0 { "right" } else { "left" }
+                if state.walk_direction >= 0.0 { "right" } else { "left" },
+                state.walk_speed,
+                state.walk_target_speed
             ),
         );
         ui.label(None, "Motion editor");
@@ -1140,9 +1161,11 @@ fn draw_overlay(
     draw_text(&format!("mode: {}", state.mode), 40.0, 120.0, 24.0, color_u8!(57, 62, 70, 255));
     draw_text(
         &format!(
-            "walk: {} {}",
+            "walk: {} {}  {:.2}/{:.2} m/s",
             if state.walk_enabled { "on" } else { "off" },
-            if state.walk_direction >= 0.0 { "->" } else { "<-" }
+            if state.walk_direction >= 0.0 { "->" } else { "<-" },
+            state.walk_speed,
+            state.walk_target_speed
         ),
         40.0,
         148.0,
@@ -1294,7 +1317,7 @@ impl Default for ControlPanelState {
             servo_kp: 20.0,
             servo_ki: 0.0,
             servo_kd: 0.0,
-            servo_max_torque: 10.0,
+            servo_max_torque: 2.55,
             suspend_height: 0.8,
             motion_frame_ms: 300.0,
             motion_frames: Vec::new(),

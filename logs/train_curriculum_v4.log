@@ -1,0 +1,54 @@
+Using cpu device
+[long-eval] new best min_robot_dx=-0.001 saved to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_best_long.zip
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 332       |
+|    ep_rew_mean     | -1.36e+03 |
+| time/              |           |
+|    fps             | 1382      |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 1024      |
+----------------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 332       |
+|    ep_rew_mean     | -1.36e+03 |
+| time/              |           |
+|    fps             | 1011      |
+|    iterations      | 1         |
+|    time_elapsed    | 1         |
+|    total_timesteps | 2048      |
+----------------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 419       |
+|    ep_rew_mean     | -1.83e+03 |
+| time/              |           |
+|    fps             | 1517      |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 3072      |
+----------------------------------
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 331      |
+|    ep_rew_mean     | -1.7e+03 |
+| time/              |          |
+|    fps             | 1506     |
+|    iterations      | 1        |
+|    time_elapsed    | 0        |
+|    total_timesteps | 4096     |
+---------------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 279       |
+|    ep_rew_mean     | -1.82e+03 |
+| time/              |           |
+|    fps             | 1503      |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 5120      |
+----------------------------------
+saved model to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_policy.zip
+saved vecnormalize to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_vecnormalize.pkl

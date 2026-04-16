@@ -1,0 +1,45 @@
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+Users of this version of Gym should be able to simply replace 'import gym' with 'import gymnasium as gym' in the vast majority of cases.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+Traceback (most recent call last):
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\train_walk_sb3_ppo_curriculum.py", line 334, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\train_walk_sb3_ppo_curriculum.py", line 243, in main
+    vec_env = DummyVecEnv(env_fns)
+  File "C:\Users\root\Miniconda3\Lib\site-packages\stable_baselines3\common\vec_env\dummy_vec_env.py", line 31, in __init__
+    self.envs = [_patch_env(fn()) for fn in env_fns]
+                            ~~^^
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\train_walk_sb3_ppo_curriculum.py", line 44, in _factory
+    env = GymnasiumRobotEnv(
+        transport=transport,
+    ...<11 lines>...
+        settle_steps=settle_steps,
+    )
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\gymnasium_robot_env.py", line 69, in __init__
+    self.env = DesktopRobotEnv(
+               ~~~~~~~~~~~~~~~^
+        transport=transport,
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        repeat_steps=repeat_steps,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\desktop_rl_env.py", line 184, in __init__
+    self._backend = self._create_backend(
+                    ~~~~~~~~~~~~~~~~~~~~^
+        transport=transport,
+        ^^^^^^^^^^^^^^^^^^^^
+        dll_path=dll_path,
+        ^^^^^^^^^^^^^^^^^^
+        config_path=config_path,
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\desktop_rl_env.py", line 267, in _create_backend
+    backend = _FfiBackend(dll_path=dll_path, config_path=config_path)
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\desktop_rl_env.py", line 120, in __init__
+    raise RuntimeError("SimulatorFFIClient is unavailable")
+RuntimeError: SimulatorFFIClient is unavailable

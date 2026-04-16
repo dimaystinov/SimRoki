@@ -1,0 +1,786 @@
+[
+  {
+    "step": 1,
+    "eval_right": {
+      "reward": 18.533949660000005,
+      "robot_dx": -0.4234116,
+      "ball_dx": 24.2199994
+    },
+    "eval_left": {
+      "reward": 51.70304892,
+      "robot_dx": 0.6818778,
+      "ball_dx": 24.2199998
+    },
+    "score": 3.5737650800000003,
+    "buffer_size": 8,
+    "num_envs": 8
+  },
+  {
+    "step": 250,
+    "eval_right": {
+      "reward": 18.533949660000005,
+      "robot_dx": -0.4234116,
+      "ball_dx": 24.2199994
+    },
+    "eval_left": {
+      "reward": 51.70304892,
+      "robot_dx": 0.6818778,
+      "ball_dx": 24.2199998
+    },
+    "score": 3.5737650800000003,
+    "buffer_size": 2000,
+    "num_envs": 8
+  },
+  {
+    "step": 500,
+    "eval_right": {
+      "reward": 38.774893690000006,
+      "robot_dx": -0.8285267,
+      "ball_dx": 24.219999299999998
+    },
+    "eval_left": {
+      "reward": 47.04183323000001,
+      "robot_dx": 0.85068804,
+      "ball_dx": 24.22000004
+    },
+    "score": 2.3584197600000003,
+    "buffer_size": 4000,
+    "num_envs": 8
+  },
+  {
+    "step": 750,
+    "eval_right": {
+      "reward": 71.92320938,
+      "robot_dx": 0.06435428,
+      "ball_dx": 24.22000028
+    },
+    "eval_left": {
+      "reward": 46.67881403000001,
+      "robot_dx": 0.9408648,
+      "ball_dx": 24.2199998
+    },
+    "score": 5.0370628,
+    "buffer_size": 6000,
+    "num_envs": 8
+  },
+  {
+    "step": 1000,
+    "eval_right": {
+      "reward": 67.93508394000001,
+      "robot_dx": -1.1049392,
+      "ball_dx": 24.219999799999997
+    },
+    "eval_left": {
+      "reward": 46.15456811000001,
+      "robot_dx": 0.9047228,
+      "ball_dx": 24.219999299999998
+    },
+    "score": 1.5291822600000002,
+    "buffer_size": 8000,
+    "num_envs": 8
+  },
+  {
+    "step": 1250,
+    "eval_right": {
+      "reward": 16.06131909,
+      "robot_dx": -0.36114824,
+      "ball_dx": 24.21999976
+    },
+    "eval_left": {
+      "reward": 16.86300512,
+      "robot_dx": 0.3377225,
+      "ball_dx": 24.2199995
+    },
+    "score": 3.76055518,
+    "buffer_size": 10000,
+    "num_envs": 8
+  },
+  {
+    "step": 1500,
+    "eval_right": {
+      "reward": 17.818632370000003,
+      "robot_dx": -0.40047726,
+      "ball_dx": 24.21999974
+    },
+    "eval_left": {
+      "reward": 17.851285779999998,
+      "robot_dx": 0.41748,
+      "ball_dx": 24.22
+    },
+    "score": 3.6425681680000004,
+    "buffer_size": 12000,
+    "num_envs": 8
+  },
+  {
+    "step": 1750,
+    "eval_right": {
+      "reward": 16.968894170000002,
+      "robot_dx": -0.35425845,
+      "ball_dx": 24.219999549999997
+    },
+    "eval_left": {
+      "reward": 17.76988642,
+      "robot_dx": 0.40068474,
+      "ball_dx": 24.21999974
+    },
+    "score": 3.78122456,
+    "buffer_size": 14000,
+    "num_envs": 8
+  },
+  {
+    "step": 2000,
+    "eval_right": {
+      "reward": 18.61925054,
+      "robot_dx": -0.36148047,
+      "ball_dx": 24.21999953
+    },
+    "eval_left": {
+      "reward": 18.88018861,
+      "robot_dx": 0.40901127,
+      "ball_dx": 24.22000027
+    },
+    "score": 3.7595584960000004,
+    "buffer_size": 16000,
+    "num_envs": 8
+  },
+  {
+    "step": 2250,
+    "eval_right": {
+      "reward": 22.606295559999992,
+      "robot_dx": -0.46243855,
+      "ball_dx": 24.21999945
+    },
+    "eval_left": {
+      "reward": 22.262573190000005,
+      "robot_dx": 0.4302929,
+      "ball_dx": 24.219999899999998
+    },
+    "score": 3.45668424,
+    "buffer_size": 18000,
+    "num_envs": 8
+  },
+  {
+    "step": 2500,
+    "eval_right": {
+      "reward": 28.048800309999997,
+      "robot_dx": -0.5456945,
+      "ball_dx": 24.2199995
+    },
+    "eval_left": {
+      "reward": 26.959969080000004,
+      "robot_dx": 0.31669816,
+      "ball_dx": 24.220000159999998
+    },
+    "score": 3.2069164,
+    "buffer_size": 20000,
+    "num_envs": 8
+  },
+  {
+    "step": 2750,
+    "eval_right": {
+      "reward": 54.658597499999985,
+      "robot_dx": -1.1926235,
+      "ball_dx": 24.2199995
+    },
+    "eval_left": {
+      "reward": 41.45637055000001,
+      "robot_dx": 0.6872275,
+      "ball_dx": 24.2199995
+    },
+    "score": 1.2661293999999996,
+    "buffer_size": 22000,
+    "num_envs": 8
+  },
+  {
+    "step": 3000,
+    "eval_right": {
+      "reward": 119.46558684999998,
+      "robot_dx": -0.8902945,
+      "ball_dx": 24.2199995
+    },
+    "eval_left": {
+      "reward": 95.96498107000001,
+      "robot_dx": -0.9158472,
+      "ball_dx": 24.219999299999998
+    },
+    "score": 2.0964582600000004,
+    "buffer_size": 24000,
+    "num_envs": 8
+  },
+  {
+    "step": 3250,
+    "eval_right": {
+      "reward": 49.24876484000001,
+      "robot_dx": -1.1026996,
+      "ball_dx": 24.2199994
+    },
+    "eval_left": {
+      "reward": 148.16820912000009,
+      "robot_dx": 0.9302982,
+      "ball_dx": 24.2200002
+    },
+    "score": 1.5359010800000004,
+    "buffer_size": 26000,
+    "num_envs": 8
+  },
+  {
+    "step": 3500,
+    "eval_right": {
+      "reward": 112.92611925999988,
+      "robot_dx": -1.4517027,
+      "ball_dx": 24.2200003
+    },
+    "eval_left": {
+      "reward": 49.90655335999999,
+      "robot_dx": -0.5396018,
+      "ball_dx": 24.2199992
+    },
+    "score": 0.4888917400000006,
+    "buffer_size": 28000,
+    "num_envs": 8
+  },
+  {
+    "step": 3750,
+    "eval_right": {
+      "reward": 91.82120665999997,
+      "robot_dx": -1.6126076,
+      "ball_dx": 24.220000399999996
+    },
+    "eval_left": {
+      "reward": 96.05189156000002,
+      "robot_dx": -0.6691125,
+      "ball_dx": 24.2199995
+    },
+    "score": 0.0061771000000003795,
+    "buffer_size": 30000,
+    "num_envs": 8
+  },
+  {
+    "step": 4000,
+    "eval_right": {
+      "reward": 84.99388422999998,
+      "robot_dx": -1.5573136,
+      "ball_dx": 24.220000399999996
+    },
+    "eval_left": {
+      "reward": 62.64551087999998,
+      "robot_dx": -0.569075,
+      "ball_dx": 24.219999
+    },
+    "score": 0.17205900000000085,
+    "buffer_size": 32000,
+    "num_envs": 8
+  },
+  {
+    "step": 4250,
+    "eval_right": {
+      "reward": 61.65714637999997,
+      "robot_dx": -1.079867,
+      "ball_dx": 24.22
+    },
+    "eval_left": {
+      "reward": 81.42870093000002,
+      "robot_dx": -0.79399055,
+      "ball_dx": 24.21999945
+    },
+    "score": 1.6043988900000006,
+    "buffer_size": 34000,
+    "num_envs": 8
+  },
+  {
+    "step": 4500,
+    "eval_right": {
+      "reward": 63.79839211999999,
+      "robot_dx": -1.0363545,
+      "ball_dx": 24.220000499999998
+    },
+    "eval_left": {
+      "reward": 32.7334786,
+      "robot_dx": -0.02697628,
+      "ball_dx": 24.21999972
+    },
+    "score": 1.7349364439999997,
+    "buffer_size": 36000,
+    "num_envs": 8
+  },
+  {
+    "step": 4750,
+    "eval_right": {
+      "reward": 80.75806977999999,
+      "robot_dx": -0.5234057,
+      "ball_dx": 24.220000300000002
+    },
+    "eval_left": {
+      "reward": 59.469979729999984,
+      "robot_dx": -0.5971281,
+      "ball_dx": 24.219999899999998
+    },
+    "score": 3.0526156799999993,
+    "buffer_size": 38000,
+    "num_envs": 8
+  },
+  {
+    "step": 5000,
+    "eval_right": {
+      "reward": 87.64355845999998,
+      "robot_dx": -0.58705014,
+      "ball_dx": 24.21999986
+    },
+    "eval_left": {
+      "reward": 36.148441990000016,
+      "robot_dx": 0.06663001,
+      "ball_dx": 24.219999010000002
+    },
+    "score": 3.082849382000001,
+    "buffer_size": 40000,
+    "num_envs": 8
+  },
+  {
+    "step": 5250,
+    "eval_right": {
+      "reward": 79.64553728,
+      "robot_dx": -0.5329664,
+      "ball_dx": 24.2199996
+    },
+    "eval_left": {
+      "reward": 74.35965733000002,
+      "robot_dx": -0.4582391,
+      "ball_dx": 24.219999899999998
+    },
+    "score": 3.245100720000001,
+    "buffer_size": 42000,
+    "num_envs": 8
+  },
+  {
+    "step": 5500,
+    "eval_right": {
+      "reward": 59.71073672000001,
+      "robot_dx": -1.0626798,
+      "ball_dx": 24.2200002
+    },
+    "eval_left": {
+      "reward": 78.00914839999999,
+      "robot_dx": -0.29802072,
+      "ball_dx": 24.21999928
+    },
+    "score": 1.6559604559999999,
+    "buffer_size": 44000,
+    "num_envs": 8
+  },
+  {
+    "step": 5750,
+    "eval_right": {
+      "reward": 147.93356334000003,
+      "robot_dx": -1.4758337,
+      "ball_dx": 24.2200003
+    },
+    "eval_left": {
+      "reward": 51.916512,
+      "robot_dx": -0.4588541,
+      "ball_dx": 24.2199989
+    },
+    "score": 0.416498680000001,
+    "buffer_size": 46000,
+    "num_envs": 8
+  },
+  {
+    "step": 6000,
+    "eval_right": {
+      "reward": 82.47508821000004,
+      "robot_dx": -1.1232388,
+      "ball_dx": 24.2199992
+    },
+    "eval_left": {
+      "reward": 62.03039252999998,
+      "robot_dx": -0.4479456,
+      "ball_dx": 24.2199994
+    },
+    "score": 1.4742834400000007,
+    "buffer_size": 48000,
+    "num_envs": 8
+  },
+  {
+    "step": 6250,
+    "eval_right": {
+      "reward": 13.100409970000001,
+      "robot_dx": 0.12390294,
+      "ball_dx": 24.21999894
+    },
+    "eval_left": {
+      "reward": 120.02267127999995,
+      "robot_dx": 1.6801795,
+      "ball_dx": 24.2199995
+    },
+    "score": 5.215708608000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 6500,
+    "eval_right": {
+      "reward": 316.77191079,
+      "robot_dx": -2.2869012,
+      "ball_dx": 24.2199998
+    },
+    "eval_left": {
+      "reward": 36.12496470000001,
+      "robot_dx": 0.47141233,
+      "ball_dx": 24.21999933
+    },
+    "score": -2.016703733999999,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 6750,
+    "eval_right": {
+      "reward": 366.35282907999954,
+      "robot_dx": -1.4273062,
+      "ball_dx": 24.219999799999997
+    },
+    "eval_left": {
+      "reward": 47.88686082,
+      "robot_dx": 0.42184845,
+      "ball_dx": 24.21999945
+    },
+    "score": 0.5620812900000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 7000,
+    "eval_right": {
+      "reward": 145.44646497999986,
+      "robot_dx": -0.6161557,
+      "ball_dx": 24.219999299999998
+    },
+    "eval_left": {
+      "reward": 43.3361872,
+      "robot_dx": 0.48883963,
+      "ball_dx": 24.22000013
+    },
+    "score": 2.9955327600000006,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 7250,
+    "eval_right": {
+      "reward": 120.90220407999999,
+      "robot_dx": 0.014644335,
+      "ball_dx": 24.219999334999997
+    },
+    "eval_left": {
+      "reward": 371.38247501999984,
+      "robot_dx": 2.099155,
+      "ball_dx": 24.22
+    },
+    "score": 4.887932872,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 7500,
+    "eval_right": {
+      "reward": 57.92031111999999,
+      "robot_dx": -0.23474188,
+      "ball_dx": 24.22000012
+    },
+    "eval_left": {
+      "reward": 32.45777172000001,
+      "robot_dx": -0.17280668,
+      "ball_dx": 24.21999932
+    },
+    "score": 4.139774224000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 7750,
+    "eval_right": {
+      "reward": 371.53264376,
+      "robot_dx": -1.2845359,
+      "ball_dx": 24.2199991
+    },
+    "eval_left": {
+      "reward": 55.55284834999999,
+      "robot_dx": -0.2970103,
+      "ball_dx": 24.2199997
+    },
+    "score": 0.9903921200000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 8000,
+    "eval_right": {
+      "reward": 161.9751823900001,
+      "robot_dx": 0.007949534,
+      "ball_dx": 24.219999534
+    },
+    "eval_left": {
+      "reward": 158.1724692600001,
+      "robot_dx": 1.6165457,
+      "ball_dx": 24.2199997
+    },
+    "score": 4.867848508800001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 8250,
+    "eval_right": {
+      "reward": 376.24817214999956,
+      "robot_dx": -0.68136424,
+      "ball_dx": 24.21999976
+    },
+    "eval_left": {
+      "reward": 149.54936693,
+      "robot_dx": -0.559521,
+      "ball_dx": 24.219999
+    },
+    "score": 2.7999070800000005,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 8500,
+    "eval_right": {
+      "reward": 374.2554398699996,
+      "robot_dx": -1.2295997,
+      "ball_dx": 24.220000300000002
+    },
+    "eval_left": {
+      "reward": 88.29787556999996,
+      "robot_dx": -0.13608244,
+      "ball_dx": 24.219999559999998
+    },
+    "score": 1.155200812,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 8750,
+    "eval_right": {
+      "reward": 55.530318769999994,
+      "robot_dx": -0.2719752,
+      "ball_dx": 24.2199998
+    },
+    "eval_left": {
+      "reward": 369.2368478799998,
+      "robot_dx": 1.0351087,
+      "ball_dx": 24.2199997
+    },
+    "score": 4.02807434,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 9000,
+    "eval_right": {
+      "reward": 365.2573154900004,
+      "robot_dx": -1.6948644,
+      "ball_dx": 24.2199996
+    },
+    "eval_left": {
+      "reward": 59.65503820999999,
+      "robot_dx": 0.5713329,
+      "ball_dx": 24.219999899999998
+    },
+    "score": -0.2405932799999988,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 9250,
+    "eval_right": {
+      "reward": 373.87485329000003,
+      "robot_dx": -1.0444509,
+      "ball_dx": 24.219999100000003
+    },
+    "eval_left": {
+      "reward": 367.5944897600003,
+      "robot_dx": 1.5465008,
+      "ball_dx": 24.219999299999998
+    },
+    "score": 1.7106471200000009,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 9500,
+    "eval_right": {
+      "reward": 89.42204728999997,
+      "robot_dx": 0.4553151,
+      "ball_dx": 24.2199991
+    },
+    "eval_left": {
+      "reward": 69.20332274,
+      "robot_dx": 0.5759041,
+      "ball_dx": 24.2200001
+    },
+    "score": 6.20994512,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 9750,
+    "eval_right": {
+      "reward": 267.59466595999993,
+      "robot_dx": 0.00065245363,
+      "ball_dx": 24.21999945363
+    },
+    "eval_left": {
+      "reward": 39.86510555,
+      "robot_dx": 0.51185924,
+      "ball_dx": 24.220000239999997
+    },
+    "score": 4.845957251615999,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 10000,
+    "eval_right": {
+      "reward": 374.89171692000036,
+      "robot_dx": -1.1122446,
+      "ball_dx": 24.2199994
+    },
+    "eval_left": {
+      "reward": 39.034255319999986,
+      "robot_dx": 0.39198974,
+      "ball_dx": 24.21999974
+    },
+    "score": 1.5072660800000004,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 10250,
+    "eval_right": {
+      "reward": 75.87906129000002,
+      "robot_dx": 0.4440003,
+      "ball_dx": 24.219999299999998
+    },
+    "eval_left": {
+      "reward": 79.64372085999996,
+      "robot_dx": 0.67023045,
+      "ball_dx": 24.21999945
+    },
+    "score": 6.176000760000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 10500,
+    "eval_right": {
+      "reward": 372.1545069800003,
+      "robot_dx": -1.410808,
+      "ball_dx": 24.219999
+    },
+    "eval_left": {
+      "reward": 73.89784865999998,
+      "robot_dx": 0.47608253,
+      "ball_dx": 24.21999953
+    },
+    "score": 0.6115758000000007,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 10750,
+    "eval_right": {
+      "reward": 377.6093751900003,
+      "robot_dx": -0.8523345,
+      "ball_dx": 24.2199995
+    },
+    "eval_left": {
+      "reward": 43.77697460000001,
+      "robot_dx": 0.3989672,
+      "ball_dx": 24.2200002
+    },
+    "score": 2.2869964,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 11000,
+    "eval_right": {
+      "reward": 205.7958128199999,
+      "robot_dx": -0.1709739,
+      "ball_dx": 24.2199991
+    },
+    "eval_left": {
+      "reward": 67.17156072999997,
+      "robot_dx": 0.48098585,
+      "ball_dx": 24.21999985
+    },
+    "score": 4.331078120000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 11250,
+    "eval_right": {
+      "reward": 333.6892979600001,
+      "robot_dx": -1.1413403,
+      "ball_dx": 24.219999700000002
+    },
+    "eval_left": {
+      "reward": 368.05780180999983,
+      "robot_dx": 1.0018781,
+      "ball_dx": 24.2200001
+    },
+    "score": 1.4199790400000007,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 11500,
+    "eval_right": {
+      "reward": 55.75090245000002,
+      "robot_dx": -0.13613002,
+      "ball_dx": 24.21999998
+    },
+    "eval_left": {
+      "reward": 117.24761564999999,
+      "robot_dx": -0.663351,
+      "ball_dx": 24.22
+    },
+    "score": 2.853946996000001,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 11750,
+    "eval_right": {
+      "reward": 88.82771383000002,
+      "robot_dx": 0.23473638,
+      "ball_dx": 24.219999379999997
+    },
+    "eval_left": {
+      "reward": 45.27358074,
+      "robot_dx": 0.36710483,
+      "ball_dx": 24.21999983
+    },
+    "score": 5.5482090159999995,
+    "buffer_size": 50000,
+    "num_envs": 8
+  },
+  {
+    "step": 12000,
+    "eval_right": {
+      "reward": 54.621449150000004,
+      "robot_dx": -0.026764786,
+      "ball_dx": 24.220000214000002
+    },
+    "eval_left": {
+      "reward": 372.36720506000006,
+      "robot_dx": 1.1485775,
+      "ball_dx": 24.2199995
+    },
+    "score": 4.763705542,
+    "buffer_size": 50000,
+    "num_envs": 8
+  }
+]

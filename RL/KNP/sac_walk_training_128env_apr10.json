@@ -1,0 +1,274 @@
+[
+  {
+    "step": 1,
+    "eval_right": {
+      "reward": 15.745192020000003,
+      "robot_dx": -0.35690165,
+      "ball_dx": 24.22000035
+    },
+    "eval_left": {
+      "reward": 40.55281402,
+      "robot_dx": 0.74352676,
+      "ball_dx": 24.21999976
+    },
+    "score": 3.7732950020000007,
+    "buffer_size": 128,
+    "num_envs": 128
+  },
+  {
+    "step": 250,
+    "eval_right": {
+      "reward": 15.745192020000003,
+      "robot_dx": -0.35690165,
+      "ball_dx": 24.22000035
+    },
+    "eval_left": {
+      "reward": 40.55281402,
+      "robot_dx": 0.74352676,
+      "ball_dx": 24.21999976
+    },
+    "score": 3.7732950020000007,
+    "buffer_size": 32000,
+    "num_envs": 128
+  },
+  {
+    "step": 500,
+    "eval_right": {
+      "reward": 70.04886161000002,
+      "robot_dx": -0.9378645,
+      "ball_dx": 24.2199995
+    },
+    "eval_left": {
+      "reward": 46.72502274000001,
+      "robot_dx": 0.8214457,
+      "ball_dx": 24.2199997
+    },
+    "score": 2.0304064,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 750,
+    "eval_right": {
+      "reward": 42.924276220000024,
+      "robot_dx": -1.0814831,
+      "ball_dx": 24.219999899999998
+    },
+    "eval_left": {
+      "reward": 42.92779466999998,
+      "robot_dx": 0.8863915,
+      "ball_dx": 24.2199995
+    },
+    "score": 1.5995505999999997,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 1000,
+    "eval_right": {
+      "reward": 41.38616854000002,
+      "robot_dx": -0.9067979,
+      "ball_dx": 24.2200001
+    },
+    "eval_left": {
+      "reward": 46.76709467000001,
+      "robot_dx": 0.9126392,
+      "ball_dx": 24.219999199999997
+    },
+    "score": 2.1236061399999993,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 1250,
+    "eval_right": {
+      "reward": 19.717929669999997,
+      "robot_dx": -0.36279517,
+      "ball_dx": 24.21999983
+    },
+    "eval_left": {
+      "reward": 46.84521158,
+      "robot_dx": 0.9123232,
+      "ball_dx": 24.2200002
+    },
+    "score": 3.755614456,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 1500,
+    "eval_right": {
+      "reward": 16.996955370000002,
+      "robot_dx": -0.32369563,
+      "ball_dx": 24.21999937
+    },
+    "eval_left": {
+      "reward": 16.43361872,
+      "robot_dx": 0.33442888,
+      "ball_dx": 24.21999988
+    },
+    "score": 3.8729129840000005,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 1750,
+    "eval_right": {
+      "reward": 48.682073950000024,
+      "robot_dx": -0.9917256,
+      "ball_dx": 24.220000399999996
+    },
+    "eval_left": {
+      "reward": 20.188667259999992,
+      "robot_dx": 0.35914493,
+      "ball_dx": 24.21999943
+    },
+    "score": 1.8688230860000008,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 2000,
+    "eval_right": {
+      "reward": 17.683338550000002,
+      "robot_dx": -0.3206017,
+      "ball_dx": 24.219999299999998
+    },
+    "eval_left": {
+      "reward": 16.73872163,
+      "robot_dx": 0.31655443,
+      "ball_dx": 24.22000043
+    },
+    "score": 3.8821947600000004,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 2250,
+    "eval_right": {
+      "reward": 52.23065890000001,
+      "robot_dx": -0.89952636,
+      "ball_dx": 24.219999639999997
+    },
+    "eval_left": {
+      "reward": 28.90599665000001,
+      "robot_dx": 0.4161933,
+      "ball_dx": 24.2200003
+    },
+    "score": 2.1454208479999997,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 2500,
+    "eval_right": {
+      "reward": 83.78545616999996,
+      "robot_dx": -1.3014711,
+      "ball_dx": 24.2199989
+    },
+    "eval_left": {
+      "reward": 54.25356659999998,
+      "robot_dx": 0.738956,
+      "ball_dx": 24.22
+    },
+    "score": 0.9395864800000004,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 2750,
+    "eval_right": {
+      "reward": 136.89805505,
+      "robot_dx": -1.3963201,
+      "ball_dx": 24.219999899999998
+    },
+    "eval_left": {
+      "reward": 84.09724317999999,
+      "robot_dx": 1.1250694,
+      "ball_dx": 24.2199994
+    },
+    "score": 0.6550395800000004,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 3000,
+    "eval_right": {
+      "reward": 56.52363938999999,
+      "robot_dx": -1.0928164,
+      "ball_dx": 24.2199996
+    },
+    "eval_left": {
+      "reward": 58.46094967,
+      "robot_dx": 0.82007325,
+      "ball_dx": 24.22000025
+    },
+    "score": 1.565550720000001,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 3250,
+    "eval_right": {
+      "reward": 81.91842709000001,
+      "robot_dx": -1.2199625,
+      "ball_dx": 24.2199995
+    },
+    "eval_left": {
+      "reward": 38.28916679000001,
+      "robot_dx": 0.5965453,
+      "ball_dx": 24.219999299999998
+    },
+    "score": 1.1841123600000003,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 3500,
+    "eval_right": {
+      "reward": 85.06378967000003,
+      "robot_dx": -1.2828971,
+      "ball_dx": 24.219999899999998
+    },
+    "eval_left": {
+      "reward": 44.40599886999999,
+      "robot_dx": 0.71278614,
+      "ball_dx": 24.22000014
+    },
+    "score": 0.9953086799999995,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 3750,
+    "eval_right": {
+      "reward": 100.61741036,
+      "robot_dx": -1.3356732,
+      "ball_dx": 24.219999799999997
+    },
+    "eval_left": {
+      "reward": 45.23704229000001,
+      "robot_dx": 0.54955274,
+      "ball_dx": 24.21999974
+    },
+    "score": 0.8369803480000009,
+    "buffer_size": 50000,
+    "num_envs": 128
+  },
+  {
+    "step": 4000,
+    "eval_right": {
+      "reward": 13.188221679999998,
+      "robot_dx": 0.13328616,
+      "ball_dx": 24.21999916
+    },
+    "eval_left": {
+      "reward": 44.86131427999999,
+      "robot_dx": 0.56698793,
+      "ball_dx": 24.21999993
+    },
+    "score": 5.243858312,
+    "buffer_size": 50000,
+    "num_envs": 128
+  }
+]

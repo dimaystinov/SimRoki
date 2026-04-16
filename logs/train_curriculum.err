@@ -1,0 +1,31 @@
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+Users of this version of Gym should be able to simply replace 'import gym' with 'import gymnasium as gym' in the vast majority of cases.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+usage: train_walk_sb3_ppo_curriculum.py [-h] [--num-envs NUM_ENVS]
+                                        [--repeat-steps REPEAT_STEPS]
+                                        [--action-limit-deg ACTION_LIMIT_DEG]
+                                        [--transport TRANSPORT]
+                                        [--dll-path DLL_PATH]
+                                        [--config-path CONFIG_PATH]
+                                        [--residual-walk | --no-residual-walk]
+                                        [--learning-rate LEARNING_RATE]
+                                        [--n-steps N_STEPS]
+                                        [--batch-size BATCH_SIZE]
+                                        [--seed SEED]
+                                        [--stand-steps STAND_STEPS]
+                                        [--balance-steps BALANCE_STEPS]
+                                        [--walk-steps WALK_STEPS]
+                                        [--speed-steps SPEED_STEPS]
+                                        [--endurance-steps ENDURANCE_STEPS]
+                                        [--settle-steps SETTLE_STEPS]
+                                        [--eval-freq EVAL_FREQ]
+                                        [--eval-steps EVAL_STEPS]
+                                        [--policy-path POLICY_PATH]
+                                        [--vecnorm-path VECNORM_PATH]
+                                        [--log-path LOG_PATH]
+                                        [--best-policy-path BEST_POLICY_PATH]
+                                        [--best-vecnorm-path BEST_VECNORM_PATH]
+                                        [--resume-from RESUME_FROM]
+                                        [--resume-vecnorm-from RESUME_VECNORM_FROM]
+train_walk_sb3_ppo_curriculum.py: error: unrecognized arguments: --reward-mode shaped --curriculum-stages 1,2,3 --n-envs 1 --gamma 0.99 --gae-lambda 0.95 --ent-coef 0.0 --clip-range 0.2 --num-steps 300000 --max-steps 1500 --episode-len 1500 --save-freq 20000 --log-interval 50

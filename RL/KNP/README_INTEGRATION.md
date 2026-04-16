@@ -1,16 +1,34 @@
 # RL Integration Notes
 
-This folder now contains the local Python environment plus the first bridge layer from Python to the running desktop simulator.
+The up-to-date high-level RL overview and current benchmark results now live in:
+
+- [RL/README.md](C:/Users/root/Documents/New%20project/RL/README.md)
+
+This folder now contains the local Python environment plus a hybrid bridge layer from Python to the simulator.
 
 ## What is ready
 
 - local Miniconda environment in `.conda`
 - `knp` wheel installed
 - `torch`, `torchvision`, `torchaudio` installed
-- `desktop_rl_env.py`: Python environment wrapper over the desktop simulator
+- `desktop_rl_env.py`: hybrid Python environment wrapper over the simulator
+- `gymnasium_robot_env.py`: Gymnasium-compatible wrapper over the same environment
 - `knp_walk_scaffold.py`: KNP-side scaffold check
 - `knp_walk_kick_train.py`: visible KNP-style walking-and-kicking trainer
 - `torch_walk_debug.py`: PyTorch-side debug rollout
+
+## Hybrid transport
+
+The RL bridge now supports two transports:
+
+- `ffi`: direct in-process calls through [target/release/sim_core.dll](C:/Users/root/Documents/New%20project/target/release/sim_core.dll)
+- `http`: fallback to the desktop server on `127.0.0.1:8080`
+
+The default mode is:
+
+- `transport="auto"`
+
+In this mode Python tries FFI first, then falls back to HTTP if the DLL is unavailable.
 
 ## RL API exposed by the simulator
 
@@ -79,27 +97,13 @@ These thresholds and weights now live in `robot_config.toml` under `[rl]`.
 
 ## Recommended protocol
 
-For the current visual testing phase:
+Current recommendation for this project:
 
-- use the existing local HTTP API with JSON
-- it is slower than shared memory, but much easier to inspect and debug while the desktop window is open
+1. use `ffi` or `auto` during local RL training for minimum latency
+2. keep `http` available for visual debugging against a running desktop window
+3. move to headless mode later without changing the high-level Python environment API
 
-For real high-throughput training later:
-
-- best option: move to in-process Python binding over `sim_core` using `pyo3` or a C ABI
-- second-best option for separate processes: shared memory ring buffer with a tiny binary header
-
-Recommendation for this project:
-
-1. keep HTTP+JSON while validating rewards, observations, reset logic, and action semantics visually
-2. once behavior is trusted, add headless mode
-3. then replace the transport with in-process binding or shared memory for fast training
-
-Binary TCP is not the best next step here:
-
-- on one machine it adds protocol complexity
-- it still copies data
-- shared memory or in-process binding beats it on latency
+Binary TCP is still not the preferred next step on one machine.
 
 ## Important note about the current KNP wheel
 
@@ -145,4 +149,11 @@ Run visible KNP-style walk-and-kick training:
 ```powershell
 & "C:\Users\root\Documents\New project\RL\KNP\.conda\python.exe" `
   "C:\Users\root\Documents\New project\RL\KNP\knp_walk_kick_train.py"
+```
+
+Hybrid smoke test:
+
+```powershell
+$env:PYTHONPATH="C:\Users\root\Documents\New project\python-sdk;C:\Users\root\Documents\New project\RL\KNP"
+python "C:\Users\root\Documents\New project\RL\KNP\hybrid_env_smoke_test.py"
 ```

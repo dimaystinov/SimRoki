@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "C:\Users\root\Documents\SimRoki\RL\KNP\train_walk_sb3_ppo_curriculum.py", line 8, in <module>
+    from stable_baselines3 import PPO
+ModuleNotFoundError: No module named 'stable_baselines3'

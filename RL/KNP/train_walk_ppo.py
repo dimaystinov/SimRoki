@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -52,8 +54,9 @@ def collect_rollout(env: DesktopRobotEnv, model: ActorCritic, horizon: int, devi
     dones_list = []
     values_list = []
 
-    current = env.reset()
+    current = env.reset_with_direction(1.0)
     obs = torch.tensor(current.observation, dtype=torch.float32, device=device)
+    direction = 1.0
 
     for _ in range(horizon):
         with torch.no_grad():
@@ -61,7 +64,7 @@ def collect_rollout(env: DesktopRobotEnv, model: ActorCritic, horizon: int, devi
             dist = Normal(mean, std)
             action = dist.sample()
             log_prob = dist.log_prob(action).sum(dim=-1)
-        result = env.step(action.squeeze(0).cpu().numpy())
+        result = env.step(action.squeeze(0).cpu().numpy(), direction=direction)
 
         obs_list.append(obs)
         actions_list.append(action.squeeze(0))
@@ -71,7 +74,8 @@ def collect_rollout(env: DesktopRobotEnv, model: ActorCritic, horizon: int, devi
         values_list.append(value.squeeze(0))
 
         if result.done or result.truncated:
-            reset = env.reset()
+            direction = -direction
+            reset = env.reset_with_direction(direction)
             obs = torch.tensor(reset.observation, dtype=torch.float32, device=device)
         else:
             obs = torch.tensor(result.observation, dtype=torch.float32, device=device)
@@ -104,6 +108,37 @@ def compute_gae(batch: RolloutBatch, gamma: float, lam: float) -> tuple[torch.Te
     return advantages, returns
 
 
+def evaluate_policy(
+    env: DesktopRobotEnv,
+    model: ActorCritic,
+    direction: float,
+    steps: int,
+    device: torch.device,
+) -> dict[str, float]:
+    result = env.reset_with_direction(direction)
+    start_robot_x = float(result.raw["observation"]["base_x"])
+    start_ball_x = start_robot_x + float(result.raw["observation"]["values"][10])
+    total_reward = 0.0
+    direction_sign = 1.0 if direction >= 0.0 else -1.0
+
+    for _ in range(steps):
+        obs = torch.tensor(result.observation, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            mean, _, _ = model(obs.unsqueeze(0))
+        result = env.step(mean.squeeze(0).cpu().numpy(), direction=direction)
+        total_reward += result.reward
+        if result.done or result.truncated:
+            break
+
+    robot_x = float(result.raw["observation"]["base_x"])
+    ball_x = robot_x + float(result.raw["observation"]["values"][10])
+    return {
+        "reward": total_reward,
+        "robot_dx": (robot_x - start_robot_x) * direction_sign,
+        "ball_dx": (ball_x - start_ball_x) * direction_sign,
+    }
+
+
 def train_visible(
     updates: int,
     horizon: int,
@@ -111,10 +146,19 @@ def train_visible(
     hidden_size: int,
     action_scale_deg: float,
     learning_rate: float,
+    log_path: Path,
+    transport: str,
+    dll_path: str | None,
+    config_path: str | None,
 ) -> None:
     device = torch.device("cpu")
-    env = DesktopRobotEnv(repeat_steps=repeat_steps)
-    initial = env.reset()
+    env = DesktopRobotEnv(
+        repeat_steps=repeat_steps,
+        transport=transport,
+        dll_path=dll_path,
+        config_path=config_path,
+    )
+    initial = env.reset_with_direction(1.0)
     model = ActorCritic(
         obs_size=initial.observation.shape[0],
         hidden_size=hidden_size,
@@ -129,6 +173,8 @@ def train_visible(
     value_coef = 0.5
     minibatch_size = min(64, horizon)
     epochs = 6
+    best_score = -float("inf")
+    history: list[dict] = []
 
     print(f"obs_size={initial.observation.shape[0]} action_size=4")
     for update in range(1, updates + 1):
@@ -174,22 +220,44 @@ def train_visible(
 
         avg_reward = float(batch.rewards.mean().item())
         avg_value = float(batch.values.mean().item())
+        eval_right = evaluate_policy(env, model, 1.0, horizon, device)
+        eval_left = evaluate_policy(env, model, -1.0, horizon, device)
+        eval_score = min(eval_right["robot_dx"], eval_left["robot_dx"]) + 1.5 * min(eval_right["ball_dx"], eval_left["ball_dx"])
+        history.append(
+            {
+                "update": update,
+                "avg_reward": avg_reward,
+                "avg_value": avg_value,
+                "eval_right": eval_right,
+                "eval_left": eval_left,
+                "eval_score": eval_score,
+            }
+        )
+        if eval_score > best_score:
+            best_score = eval_score
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "obs_size": initial.observation.shape[0],
+                    "hidden_size": hidden_size,
+                    "action_scale_deg": action_scale_deg,
+                    "observation_names": env.observation_names,
+                    "action_names": env.action_names,
+                    "best_score": eval_score,
+                    "eval_right": eval_right,
+                    "eval_left": eval_left,
+                },
+                "C:\\Users\\root\\Documents\\New project\\RL\\KNP\\ppo_walk_policy.pt",
+            )
         print(
             f"update={update:04d} avg_reward={avg_reward:+.4f} avg_value={avg_value:+.4f} "
-            f"policy_loss={total_policy_loss:.4f} value_loss={total_value_loss:.4f} entropy={total_entropy:.4f}"
+            f"policy_loss={total_policy_loss:.4f} value_loss={total_value_loss:.4f} entropy={total_entropy:.4f} "
+            f"eval_right={eval_right['robot_dx']:+.3f}/{eval_right['ball_dx']:+.3f} "
+            f"eval_left={eval_left['robot_dx']:+.3f}/{eval_left['ball_dx']:+.3f}"
         )
+        log_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
 
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "obs_size": initial.observation.shape[0],
-            "hidden_size": hidden_size,
-            "action_scale_deg": action_scale_deg,
-            "observation_names": env.observation_names,
-            "action_names": env.action_names,
-        },
-        "C:\\Users\\root\\Documents\\New project\\RL\\KNP\\ppo_walk_policy.pt",
-    )
+    log_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
     print("saved policy to RL/KNP/ppo_walk_policy.pt")
 
 
@@ -201,6 +269,14 @@ def main() -> None:
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--action-scale-deg", type=float, default=35.0)
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--transport", type=str, default="auto")
+    parser.add_argument("--dll-path", type=str, default=None)
+    parser.add_argument("--config-path", type=str, default="robot_config.toml")
+    parser.add_argument(
+        "--log-path",
+        type=Path,
+        default=Path("C:\\Users\\root\\Documents\\New project\\RL\\KNP\\ppo_walk_training.json"),
+    )
     args = parser.parse_args()
     train_visible(
         updates=args.updates,
@@ -209,6 +285,10 @@ def main() -> None:
         hidden_size=args.hidden_size,
         action_scale_deg=args.action_scale_deg,
         learning_rate=args.lr,
+        log_path=args.log_path,
+        transport=args.transport,
+        dll_path=args.dll_path,
+        config_path=args.config_path,
     )
 
 

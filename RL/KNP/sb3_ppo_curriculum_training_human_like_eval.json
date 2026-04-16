@@ -1,0 +1,170 @@
+[
+  {
+    "stage": "stand",
+    "timesteps": 65336,
+    "right_robot_dx": -0.4536701507,
+    "left_robot_dx": -0.34568824930000003,
+    "min_robot_dx": -0.4536701507
+  },
+  {
+    "stage": "stand",
+    "timesteps": 67336,
+    "right_robot_dx": -0.7364716507000001,
+    "left_robot_dx": -0.6953013092999999,
+    "min_robot_dx": -0.7364716507000001
+  },
+  {
+    "stage": "stand",
+    "timesteps": 69336,
+    "right_robot_dx": -0.8334385907,
+    "left_robot_dx": -0.8013684093,
+    "min_robot_dx": -0.8334385907
+  },
+  {
+    "stage": "stand",
+    "timesteps": 71336,
+    "right_robot_dx": -0.5262412907,
+    "left_robot_dx": -0.8375870593,
+    "min_robot_dx": -0.8375870593
+  },
+  {
+    "stage": "stand",
+    "timesteps": 73336,
+    "right_robot_dx": 0.2831892693,
+    "left_robot_dx": -0.7964381092999999,
+    "min_robot_dx": -0.7964381092999999
+  },
+  {
+    "stage": "stand",
+    "timesteps": 75336,
+    "right_robot_dx": -0.24975369069999998,
+    "left_robot_dx": -0.7155524093,
+    "min_robot_dx": -0.7155524093
+  },
+  {
+    "stage": "balance",
+    "timesteps": 77336,
+    "right_robot_dx": -0.5441168566,
+    "left_robot_dx": 0.6245257719999999,
+    "min_robot_dx": -0.5441168566
+  },
+  {
+    "stage": "balance",
+    "timesteps": 79336,
+    "right_robot_dx": -0.5450314566,
+    "left_robot_dx": 0.593649672,
+    "min_robot_dx": -0.5450314566
+  },
+  {
+    "stage": "balance",
+    "timesteps": 81336,
+    "right_robot_dx": -0.5677974066,
+    "left_robot_dx": 0.601054772,
+    "min_robot_dx": -0.5677974066
+  },
+  {
+    "stage": "balance",
+    "timesteps": 83336,
+    "right_robot_dx": -0.6103459566,
+    "left_robot_dx": 0.569005872,
+    "min_robot_dx": -0.6103459566
+  },
+  {
+    "stage": "balance",
+    "timesteps": 85336,
+    "right_robot_dx": -0.6041800265999999,
+    "left_robot_dx": 0.628193172,
+    "min_robot_dx": -0.6041800265999999
+  },
+  {
+    "stage": "balance",
+    "timesteps": 87336,
+    "right_robot_dx": -0.6749831566,
+    "left_robot_dx": 0.648554772,
+    "min_robot_dx": -0.6749831566
+  },
+  {
+    "stage": "balance",
+    "timesteps": 89336,
+    "right_robot_dx": -0.5512606566,
+    "left_robot_dx": 0.634349772,
+    "min_robot_dx": -0.5512606566
+  },
+  {
+    "stage": "balance",
+    "timesteps": 91336,
+    "right_robot_dx": -0.5564524966,
+    "left_robot_dx": 0.6308402719999999,
+    "min_robot_dx": -0.5564524966
+  },
+  {
+    "stage": "balance",
+    "timesteps": 93336,
+    "right_robot_dx": -0.5512636166,
+    "left_robot_dx": -0.8955643280000001,
+    "min_robot_dx": -0.8955643280000001
+  },
+  {
+    "stage": "balance",
+    "timesteps": 95336,
+    "right_robot_dx": -0.5717128966,
+    "left_robot_dx": 0.6321220719999999,
+    "min_robot_dx": -0.5717128966
+  },
+  {
+    "stage": "balance",
+    "timesteps": 97336,
+    "right_robot_dx": -0.6300390266,
+    "left_robot_dx": -1.026527828,
+    "min_robot_dx": -1.026527828
+  },
+  {
+    "stage": "walk",
+    "timesteps": 99336,
+    "right_robot_dx": -0.5580531266,
+    "left_robot_dx": 0.672071472,
+    "min_robot_dx": -0.5580531266
+  },
+  {
+    "stage": "walk",
+    "timesteps": 101336,
+    "right_robot_dx": -0.5763824566,
+    "left_robot_dx": 0.627028432,
+    "min_robot_dx": -0.5763824566
+  },
+  {
+    "stage": "walk",
+    "timesteps": 103336,
+    "right_robot_dx": -0.6716590566,
+    "left_robot_dx": 0.695841042,
+    "min_robot_dx": -0.6716590566
+  },
+  {
+    "stage": "walk",
+    "timesteps": 105336,
+    "right_robot_dx": -0.6165854166,
+    "left_robot_dx": 0.720432572,
+    "min_robot_dx": -0.6165854166
+  },
+  {
+    "stage": "walk",
+    "timesteps": 107336,
+    "right_robot_dx": -0.6148745566,
+    "left_robot_dx": 0.620682972,
+    "min_robot_dx": -0.6148745566
+  },
+  {
+    "stage": "walk",
+    "timesteps": 109336,
+    "right_robot_dx": -0.6350156565999999,
+    "left_robot_dx": 0.616518822,
+    "min_robot_dx": -0.6350156565999999
+  },
+  {
+    "stage": "walk",
+    "timesteps": 111336,
+    "right_robot_dx": -0.5315833566,
+    "left_robot_dx": 0.552930622,
+    "min_robot_dx": -0.5315833566
+  }
+]

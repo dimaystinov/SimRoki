@@ -1,0 +1,37 @@
+[
+  {
+    "stage": "balance",
+    "timesteps": 105336,
+    "right_robot_dx": 1.0441838997000001,
+    "left_robot_dx": -0.9912169997,
+    "min_robot_dx": -0.9912169997
+  },
+  {
+    "stage": "walk",
+    "timesteps": 145336,
+    "right_robot_dx": 1.4036207576,
+    "left_robot_dx": 0.569587741,
+    "min_robot_dx": 0.569587741
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 185336,
+    "right_robot_dx": 0.8799833997,
+    "left_robot_dx": -1.7861936576,
+    "min_robot_dx": -1.7861936576
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 225336,
+    "right_robot_dx": -0.644849541,
+    "left_robot_dx": -0.8871369697,
+    "min_robot_dx": -0.8871369697
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 265336,
+    "right_robot_dx": -0.2008172424,
+    "left_robot_dx": 0.645678041,
+    "min_robot_dx": -0.2008172424
+  }
+]

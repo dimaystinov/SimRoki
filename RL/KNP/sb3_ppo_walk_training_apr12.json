@@ -1,0 +1,7 @@
+[
+  {
+    "timesteps": 80000,
+    "ep_reward_mean": 43.14968256,
+    "ep_len_mean": 69.98
+  }
+]

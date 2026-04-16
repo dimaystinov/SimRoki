@@ -1,0 +1,27 @@
+[
+  {
+    "stage": "stand",
+    "timesteps": 40000,
+    "total_seen": 40000
+  },
+  {
+    "stage": "balance",
+    "timesteps": 60000,
+    "total_seen": 100000
+  },
+  {
+    "stage": "walk",
+    "timesteps": 120000,
+    "total_seen": 220000
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 120000,
+    "total_seen": 340000
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 120000,
+    "total_seen": 460000
+  }
+]

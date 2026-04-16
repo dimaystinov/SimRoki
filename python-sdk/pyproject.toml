@@ -4,19 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robot-sim-client"
-version = "0.1.0"
-description = "Minimal Python SDK and CLI for the robot simulator"
+version = "0.3.0"
+description = "Python wrapper for the five-link robot simulator with HTTP and direct FFI control"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["requests>=2.31"]
 
 [project.scripts]
 simctl = "robot_sim.cli:main"
 
+[project.optional-dependencies]
+rl = ["numpy>=1.26", "gymnasium>=1.2"]
+
 [tool.setuptools]
 package-dir = {"" = "."}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["robot_sim*"]
 
+[tool.setuptools.package-data]
+robot_sim = ["_native/*.dll"]

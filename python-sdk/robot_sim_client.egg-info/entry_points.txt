@@ -1,0 +1,2 @@
+[console_scripts]
+simctl = robot_sim.cli:main

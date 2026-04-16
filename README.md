@@ -10,6 +10,7 @@ Implemented right now:
 - `native_app/`: native desktop window on `macroquad`
 - local control server on `http://127.0.0.1:8080`
 - optional `python-sdk/` for external control, while desktop control works standalone
+- direct FFI layer from `sim_core` for Python without HTTP
 
 Robot model:
 
@@ -201,9 +202,29 @@ What is ready:
 Current transport recommendation:
 
 - visual debug phase: local HTTP + JSON
-- high-throughput training phase: in-process binding over `sim_core` or shared memory
+- high-throughput training phase: in-process binding over `sim_core` FFI or shared memory
 
 For this project, binary TCP is not the preferred next step on the same machine.
+
+## FFI bridge
+
+`sim_core` now builds both as a normal Rust library and as a shared library for Python FFI.
+
+Build:
+
+```powershell
+cargo build -p sim_core --release
+```
+
+Result:
+
+- [target/release/sim_core.dll](C:/Users/root/Documents/New%20project/target/release/sim_core.dll)
+
+Python can then call the simulator directly through:
+
+- [python-sdk/robot_sim/ffi_client.py](C:/Users/root/Documents/New%20project/python-sdk/robot_sim/ffi_client.py)
+
+This wrapper mirrors the main desktop API operations without going through `127.0.0.1:8080`.
 
 ## Python control
 

@@ -1,0 +1,5 @@
+requests>=2.31
+
+[rl]
+numpy>=1.26
+gymnasium>=1.2

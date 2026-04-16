@@ -1,0 +1,5 @@
+﻿Ресурс,Ссылка,Описание
+**Статья (arXiv)**,(<https://arxiv.org/abs/2011.01387>),Оригинальная статья ICRA 2021
+**GitHub: cassie-mujoco-sim**,(<https://github.com/osudrl/cassie-mujoco-sim>),Симулятор Cassie на MuJoCo (OSU)
+**GitHub: cassie (gym)**,(<https://github.com/siekmanj/cassie>),Gym-обертка от Jonah Siekmann
+**GitHub: cassie\_rl\_walking**,(<https://github.com/HybridRobotics/cassie_rl_walking>),Полная реализация RL от Berkeley

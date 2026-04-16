@@ -1,0 +1,74 @@
+Using cpu device
+[long-eval] new best min_robot_dx=-0.001 saved to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_best_long.zip
+[long-eval] new best min_robot_dx=-0.000 saved to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_best_long.zip
+----------------------------
+| time/              |     |
+|    fps             | 495 |
+|    iterations      | 1   |
+|    time_elapsed    | 0   |
+|    total_timesteps | 256 |
+----------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 184       |
+|    ep_rew_mean     | -1.66e+03 |
+| time/              |           |
+|    fps             | 602       |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 512       |
+----------------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 218       |
+|    ep_rew_mean     | -2.35e+03 |
+| time/              |           |
+|    fps             | 644       |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 768       |
+----------------------------------
+-----------------------------------------
+| rollout/                |             |
+|    ep_len_mean          | 207         |
+|    ep_rew_mean          | -2.08e+03   |
+| time/                   |             |
+|    fps                  | 539         |
+|    iterations           | 2           |
+|    time_elapsed         | 0           |
+|    total_timesteps      | 1024        |
+| train/                  |             |
+|    approx_kl            | 0.017482124 |
+|    clip_fraction        | 0.174       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | -5.68       |
+|    explained_variance   | -0.523      |
+|    learning_rate        | 0.00025     |
+|    loss                 | -0.0665     |
+|    n_updates            | 30          |
+|    policy_gradient_loss | -0.0327     |
+|    std                  | 1           |
+|    value_loss           | 0.0641      |
+-----------------------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 207       |
+|    ep_rew_mean     | -1.95e+03 |
+| time/              |           |
+|    fps             | 768       |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 1280      |
+----------------------------------
+----------------------------------
+| rollout/           |           |
+|    ep_len_mean     | 246       |
+|    ep_rew_mean     | -2.32e+03 |
+| time/              |           |
+|    fps             | 767       |
+|    iterations      | 1         |
+|    time_elapsed    | 0         |
+|    total_timesteps | 1536      |
+----------------------------------
+saved model to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_policy.zip
+saved vecnormalize to C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_vecnormalize.pkl

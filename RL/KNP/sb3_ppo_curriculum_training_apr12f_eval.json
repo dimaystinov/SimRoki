@@ -1,0 +1,16 @@
+[
+  {
+    "stage": "walk",
+    "timesteps": 131072,
+    "right_robot_dx": -0.464657156,
+    "left_robot_dx": 0.460585349,
+    "min_robot_dx": -0.464657156
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 262144,
+    "right_robot_dx": -0.480660269,
+    "left_robot_dx": 0.43056165599999996,
+    "min_robot_dx": -0.480660269
+  }
+]

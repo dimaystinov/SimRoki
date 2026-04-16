@@ -1,0 +1,51 @@
+[
+  {
+    "stage": "balance",
+    "timesteps": 353336,
+    "right_robot_dx": -0.1915540324,
+    "left_robot_dx": -0.4213733376,
+    "min_robot_dx": -0.4213733376
+  },
+  {
+    "stage": "walk",
+    "timesteps": 401336,
+    "right_robot_dx": 0.8617690497,
+    "left_robot_dx": 0.1973141024,
+    "min_robot_dx": 0.1973141024
+  },
+  {
+    "stage": "walk",
+    "timesteps": 449336,
+    "right_robot_dx": -0.2030602124,
+    "left_robot_dx": -0.9596210397,
+    "min_robot_dx": -0.9596210397
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 497336,
+    "right_robot_dx": -0.726674441,
+    "left_robot_dx": -0.8193546997,
+    "min_robot_dx": -0.8193546997
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 545336,
+    "right_robot_dx": 0.3453963376,
+    "left_robot_dx": -0.8042144497,
+    "min_robot_dx": -0.8042144497
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 593336,
+    "right_robot_dx": -0.2062725324,
+    "left_robot_dx": 0.752236741,
+    "min_robot_dx": -0.2062725324
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 641336,
+    "right_robot_dx": 0.9607781997,
+    "left_robot_dx": 0.1957566624,
+    "min_robot_dx": 0.1957566624
+  }
+]

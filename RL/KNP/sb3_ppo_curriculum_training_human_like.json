@@ -1,0 +1,20 @@
+[
+  {
+    "stage": "walk",
+    "timesteps": 102640,
+    "ep_reward_mean": -416.67217003999997,
+    "ep_len_mean": 39.34
+  },
+  {
+    "stage": "walk",
+    "timesteps": 107640,
+    "ep_reward_mean": -407.44463639,
+    "ep_len_mean": 37.93
+  },
+  {
+    "stage": "walk",
+    "timesteps": 112640,
+    "ep_reward_mean": -398.84558841,
+    "ep_len_mean": 37.15
+  }
+]

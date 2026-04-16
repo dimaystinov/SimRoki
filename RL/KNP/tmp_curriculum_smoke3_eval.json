@@ -1,0 +1,37 @@
+[
+  {
+    "stage": "stand",
+    "timesteps": 256,
+    "right_robot_dx": -0.0007228301999999999,
+    "left_robot_dx": -0.006417185,
+    "min_robot_dx": -0.006417185
+  },
+  {
+    "stage": "balance",
+    "timesteps": 512,
+    "right_robot_dx": -0.359266409,
+    "left_robot_dx": 0.24241916900000002,
+    "min_robot_dx": -0.359266409
+  },
+  {
+    "stage": "walk",
+    "timesteps": 768,
+    "right_robot_dx": -0.48167783200000003,
+    "left_robot_dx": 0.48167783200000003,
+    "min_robot_dx": -0.48167783200000003
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1024,
+    "right_robot_dx": -0.449116142,
+    "left_robot_dx": 0.664570514,
+    "min_robot_dx": -0.449116142
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 1280,
+    "right_robot_dx": -0.528493428,
+    "left_robot_dx": 0.453796572,
+    "min_robot_dx": -0.528493428
+  }
+]

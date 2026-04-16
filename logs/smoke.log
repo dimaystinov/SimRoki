@@ -1,0 +1,4 @@
+transport: ffi
+obs size: 36
+reward: -12.434906
+terminated: False truncated: False

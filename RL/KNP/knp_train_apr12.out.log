@@ -1,0 +1,53 @@
+KNP walking+kicking training started
+obs_size=32 action_size=4 hidden_size=192
+episode=0001 dir=right reward=+28.755 robot_dx=+0.507 ball_dx_world=+24.220 replay_right=+0.521/+24.220 replay_left=+1.023/+24.220 ball_gap=11.603 steps=40
+episode=0005 dir=right reward=+28.748 robot_dx=+0.514 ball_dx_world=+24.220 replay_right=+0.516/+24.220 replay_left=+1.042/+24.220 ball_gap=11.596 steps=40
+episode=0010 dir=left reward=+27.756 robot_dx=+1.043 ball_dx_world=+24.220 replay_right=+0.557/+24.220 replay_left=+1.043/+24.220 ball_gap=11.067 steps=49
+episode=0015 dir=right reward=+29.650 robot_dx=+0.526 ball_dx_world=+24.220 replay_right=+0.528/+24.220 replay_left=+1.061/+24.220 ball_gap=11.584 steps=42
+episode=0020 dir=left reward=+27.955 robot_dx=+1.060 ball_dx_world=+24.220 replay_right=+0.549/+24.220 replay_left=+1.060/+24.220 ball_gap=11.050 steps=49
+episode=0025 dir=right reward=+29.698 robot_dx=+0.534 ball_dx_world=+24.220 replay_right=+0.536/+24.220 replay_left=+1.055/+24.220 ball_gap=11.576 steps=42
+episode=0030 dir=left reward=+27.807 robot_dx=+1.047 ball_dx_world=+24.220 replay_right=+0.536/+24.220 replay_left=+1.047/+24.220 ball_gap=11.063 steps=49
+episode=0035 dir=right reward=+29.212 robot_dx=+0.506 ball_dx_world=+24.220 replay_right=+0.522/+24.220 replay_left=+1.062/+24.220 ball_gap=11.604 steps=41
+episode=0040 dir=left reward=+28.255 robot_dx=+1.062 ball_dx_world=+24.220 replay_right=+0.520/+24.220 replay_left=+1.062/+24.220 ball_gap=11.048 steps=50
+episode=0045 dir=right reward=+29.713 robot_dx=+0.520 ball_dx_world=+24.220 replay_right=+0.520/+24.220 replay_left=+1.061/+24.220 ball_gap=11.590 steps=42
+episode=0050 dir=left reward=+28.222 robot_dx=+1.061 ball_dx_world=+24.220 replay_right=+0.538/+24.220 replay_left=+1.061/+24.220 ball_gap=11.049 steps=50
+episode=0055 dir=right reward=+35.482 robot_dx=+0.875 ball_dx_world=+24.220 replay_right=+0.874/+24.220 replay_left=+1.044/+24.220 ball_gap=11.235 steps=54
+episode=0060 dir=left reward=+25.794 robot_dx=+0.850 ball_dx_world=+24.220 replay_right=+0.878/+24.220 replay_left=+0.850/+24.220 ball_gap=11.260 steps=45
+episode=0065 dir=right reward=+35.900 robot_dx=+0.875 ball_dx_world=+24.220 replay_right=+0.505/+24.220 replay_left=+0.850/+24.220 ball_gap=11.235 steps=55
+episode=0070 dir=left reward=+25.804 robot_dx=+0.849 ball_dx_world=+24.220 replay_right=+0.505/+24.220 replay_left=+0.849/+24.220 ball_gap=11.261 steps=45
+episode=0075 dir=right reward=+29.284 robot_dx=+0.505 ball_dx_world=+24.220 replay_right=+0.505/+24.220 replay_left=+0.849/+24.220 ball_gap=11.605 steps=41
+episode=0080 dir=left reward=+25.811 robot_dx=+0.849 ball_dx_world=+24.220 replay_right=+0.505/+24.220 replay_left=+0.849/+24.220 ball_gap=11.261 steps=45
+episode=0085 dir=right reward=+29.298 robot_dx=+0.505 ball_dx_world=+24.220 replay_right=+0.503/+24.220 replay_left=+0.849/+24.220 ball_gap=11.605 steps=41
+episode=0090 dir=left reward=+25.818 robot_dx=+0.848 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.848/+24.220 ball_gap=11.262 steps=45
+episode=0095 dir=right reward=+29.325 robot_dx=+0.502 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.848/+24.220 ball_gap=11.608 steps=41
+episode=0100 dir=left reward=+25.816 robot_dx=+0.848 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.848/+24.220 ball_gap=11.262 steps=45
+episode=0105 dir=right reward=+29.345 robot_dx=+0.502 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.849/+24.220 ball_gap=11.608 steps=41
+episode=0110 dir=left reward=+25.779 robot_dx=+0.850 ball_dx_world=+24.220 replay_right=+0.518/+24.220 replay_left=+0.850/+24.220 ball_gap=11.260 steps=45
+episode=0115 dir=right reward=+29.804 robot_dx=+0.517 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.852/+24.220 ball_gap=11.593 steps=42
+episode=0120 dir=left reward=+25.742 robot_dx=+0.852 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.852/+24.220 ball_gap=11.258 steps=45
+episode=0125 dir=right reward=+29.828 robot_dx=+0.517 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.842/+24.220 ball_gap=11.593 steps=42
+episode=0130 dir=left reward=+26.613 robot_dx=+0.809 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.809/+24.220 ball_gap=11.301 steps=46
+episode=0135 dir=right reward=+29.856 robot_dx=+0.518 ball_dx_world=+24.220 replay_right=+0.518/+24.220 replay_left=+0.810/+24.220 ball_gap=11.592 steps=42
+episode=0140 dir=left reward=+26.595 robot_dx=+0.811 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.811/+24.220 ball_gap=11.299 steps=46
+episode=0145 dir=right reward=+29.864 robot_dx=+0.517 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.812/+24.220 ball_gap=11.593 steps=42
+episode=0150 dir=left reward=+26.576 robot_dx=+0.812 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.812/+24.220 ball_gap=11.298 steps=46
+episode=0155 dir=right reward=+29.866 robot_dx=+0.517 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.813/+24.220 ball_gap=11.593 steps=42
+episode=0160 dir=left reward=+26.558 robot_dx=+0.813 ball_dx_world=+24.220 replay_right=+0.517/+24.220 replay_left=+0.813/+24.220 ball_gap=11.297 steps=46
+episode=0165 dir=right reward=+29.431 robot_dx=+0.502 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.813/+24.220 ball_gap=11.608 steps=41
+episode=0170 dir=left reward=+26.548 robot_dx=+0.813 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.813/+24.220 ball_gap=11.297 steps=46
+episode=0175 dir=right reward=+29.433 robot_dx=+0.502 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.812/+24.220 ball_gap=11.608 steps=41
+episode=0180 dir=left reward=+26.544 robot_dx=+0.813 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.813/+24.220 ball_gap=11.297 steps=46
+episode=0185 dir=right reward=+29.435 robot_dx=+0.501 ball_dx_world=+24.220 replay_right=+0.501/+24.220 replay_left=+0.813/+24.220 ball_gap=11.609 steps=41
+episode=0190 dir=left reward=+26.513 robot_dx=+0.802 ball_dx_world=+24.220 replay_right=+0.503/+24.220 replay_left=+0.802/+24.220 ball_gap=11.308 steps=46
+episode=0195 dir=right reward=+29.436 robot_dx=+0.503 ball_dx_world=+24.220 replay_right=+0.501/+24.220 replay_left=+0.801/+24.220 ball_gap=11.607 steps=41
+episode=0200 dir=left reward=+26.509 robot_dx=+0.802 ball_dx_world=+24.220 replay_right=+0.500/+24.220 replay_left=+0.802/+24.220 ball_gap=11.308 steps=46
+episode=0205 dir=right reward=+29.435 robot_dx=+0.500 ball_dx_world=+24.220 replay_right=+0.503/+24.220 replay_left=+0.803/+24.220 ball_gap=11.610 steps=41
+episode=0210 dir=left reward=+26.499 robot_dx=+0.803 ball_dx_world=+24.220 replay_right=+0.502/+24.220 replay_left=+0.803/+24.220 ball_gap=11.307 steps=46
+episode=0215 dir=right reward=+29.449 robot_dx=+0.502 ball_dx_world=+24.220 replay_right=+0.501/+24.220 replay_left=+0.802/+24.220 ball_gap=11.608 steps=41
+episode=0220 dir=left reward=+26.496 robot_dx=+0.802 ball_dx_world=+24.220 replay_right=+0.501/+24.220 replay_left=+0.802/+24.220 ball_gap=11.308 steps=46
+episode=0225 dir=right reward=+29.471 robot_dx=+0.501 ball_dx_world=+24.220 replay_right=+0.501/+24.220 replay_left=+0.803/+24.220 ball_gap=11.609 steps=41
+episode=0230 dir=left reward=+26.490 robot_dx=+0.802 ball_dx_world=+24.220 replay_right=+0.500/+24.220 replay_left=+0.802/+24.220 ball_gap=11.308 steps=46
+episode=0235 dir=right reward=+29.505 robot_dx=+0.500 ball_dx_world=+24.220 replay_right=+0.500/+24.220 replay_left=+0.802/+24.220 ball_gap=11.610 steps=41
+episode=0240 dir=left reward=+26.486 robot_dx=+0.802 ball_dx_world=+24.220 replay_right=+0.513/+24.220 replay_left=+0.802/+24.220 ball_gap=11.308 steps=46
+saved history to C:\Users\root\Documents\New project\RL\KNP\knp_walk_kick_training_apr12_live.json
+saved best policy to RL/KNP/knp_walk_kick_best.npz

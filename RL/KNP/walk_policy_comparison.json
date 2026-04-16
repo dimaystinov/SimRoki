@@ -1,0 +1,62 @@
+{
+  "kmp": {
+    "right": {
+      "robot_dx": -3.1736882,
+      "ball_dx": 24.22,
+      "torso_angle": 1.5796052,
+      "torso_height": 0.450599
+    },
+    "left": {
+      "robot_dx": 3.3395777,
+      "ball_dx": 24.22,
+      "torso_angle": 1.1545177,
+      "torso_height": 0.69090086
+    }
+  },
+  "knp": {
+    "right": {
+      "reward": 28.995597949999993,
+      "robot_dx": 0.50715125,
+      "ball_dx": 24.21999925
+    },
+    "left": {
+      "reward": 26.7764011,
+      "robot_dx": 0.94451,
+      "ball_dx": 24.219999
+    }
+  },
+  "ppo": {
+    "right": {
+      "reward": 191.17890172999998,
+      "robot_dx": 0.099652216,
+      "ball_dx": 24.219999215999998
+    },
+    "left": {
+      "reward": 200.42576511000007,
+      "robot_dx": 0.0095692035,
+      "ball_dx": 24.2199997035
+    }
+  },
+  "sac": {
+    "right": {
+      "reward": 151.06336271,
+      "robot_dx": 0.39154163,
+      "ball_dx": 24.21999963
+    },
+    "left": {
+      "reward": 161.65607929999996,
+      "robot_dx": 0.64366716,
+      "ball_dx": 24.21999916
+    }
+  },
+  "summary": {
+    "kmp_min_robot_dx": -3.1736882,
+    "kmp_min_ball_dx": 24.22,
+    "knp_min_robot_dx": 0.50715125,
+    "knp_min_ball_dx": 24.219999,
+    "ppo_min_robot_dx": 0.0095692035,
+    "ppo_min_ball_dx": 24.219999215999998,
+    "sac_min_robot_dx": 0.39154163,
+    "sac_min_ball_dx": 24.21999916
+  }
+}

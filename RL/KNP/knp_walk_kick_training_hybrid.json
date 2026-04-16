@@ -1,0 +1,322 @@
+[
+  {
+    "episode": 1,
+    "reward": 5.745046439999999,
+    "robot_dx": 0.2941082,
+    "ball_dx_world": 9.999999994736442e-08,
+    "robot_to_ball_dx": -1.0807273,
+    "steps": 22
+  },
+  {
+    "episode": 2,
+    "reward": 11.765773329999998,
+    "robot_dx": -0.06275369,
+    "ball_dx_world": -0.74354719,
+    "robot_to_ball_dx": -1.4674127,
+    "steps": 36
+  },
+  {
+    "episode": 3,
+    "reward": 5.728580469999998,
+    "robot_dx": 0.29415473,
+    "ball_dx_world": -6.999999990764394e-08,
+    "robot_to_ball_dx": -1.080774,
+    "steps": 22
+  },
+  {
+    "episode": 4,
+    "reward": 11.896374610000002,
+    "robot_dx": -0.08778072,
+    "ball_dx_world": -0.83235402,
+    "robot_to_ball_dx": -1.5311925,
+    "steps": 35
+  },
+  {
+    "episode": 5,
+    "reward": 5.728932710000001,
+    "robot_dx": 0.2933694,
+    "ball_dx_world": -1.1102230246251565e-16,
+    "robot_to_ball_dx": -1.0799886,
+    "steps": 22
+  },
+  {
+    "episode": 6,
+    "reward": 11.984720620000001,
+    "robot_dx": -0.106238194,
+    "ball_dx_world": -0.841372194,
+    "robot_to_ball_dx": -1.5217532,
+    "steps": 35
+  },
+  {
+    "episode": 7,
+    "reward": 5.731604310000001,
+    "robot_dx": 0.2925996,
+    "ball_dx_world": 9.999999994736442e-08,
+    "robot_to_ball_dx": -1.0792187,
+    "steps": 22
+  },
+  {
+    "episode": 8,
+    "reward": 11.88635327,
+    "robot_dx": -0.107923016,
+    "ball_dx_world": -0.8138930160000001,
+    "robot_to_ball_dx": -1.4925892,
+    "steps": 35
+  },
+  {
+    "episode": 9,
+    "reward": 5.910035360000001,
+    "robot_dx": 0.29605296,
+    "ball_dx_world": 5.999999996841865e-08,
+    "robot_to_ball_dx": -1.0826721,
+    "steps": 23
+  },
+  {
+    "episode": 10,
+    "reward": 12.168788500000002,
+    "robot_dx": -0.1003534,
+    "ball_dx_world": -0.8820880999999999,
+    "robot_to_ball_dx": -1.5683539,
+    "steps": 36
+  },
+  {
+    "episode": 11,
+    "reward": 5.915440190000001,
+    "robot_dx": 0.2961473,
+    "ball_dx_world": 0.0,
+    "robot_to_ball_dx": -1.0827665,
+    "steps": 23
+  },
+  {
+    "episode": 12,
+    "reward": 12.260908800000005,
+    "robot_dx": -0.10388316,
+    "ball_dx_world": -0.9021898600000001,
+    "robot_to_ball_dx": -1.5849259,
+    "steps": 36
+  },
+  {
+    "episode": 13,
+    "reward": 5.924195390000001,
+    "robot_dx": 0.2958669,
+    "ball_dx_world": -9.999999994736442e-08,
+    "robot_to_ball_dx": -1.0824862,
+    "steps": 23
+  },
+  {
+    "episode": 14,
+    "reward": 16.43541267,
+    "robot_dx": -0.068047434,
+    "ball_dx_world": -1.4662872339999997,
+    "robot_to_ball_dx": -2.184859,
+    "steps": 49
+  },
+  {
+    "episode": 15,
+    "reward": 6.10427196,
+    "robot_dx": 0.2965364,
+    "ball_dx_world": -1.1102230246251565e-16,
+    "robot_to_ball_dx": -1.0831556,
+    "steps": 24
+  },
+  {
+    "episode": 16,
+    "reward": 22.852046819999998,
+    "robot_dx": -0.2552301,
+    "ball_dx_world": -2.4351133,
+    "robot_to_ball_dx": -2.9665024,
+    "steps": 64
+  },
+  {
+    "episode": 17,
+    "reward": 6.31922125,
+    "robot_dx": 0.29307768,
+    "ball_dx_world": -2.0000000100495186e-08,
+    "robot_to_ball_dx": -1.0796969,
+    "steps": 25
+  },
+  {
+    "episode": 18,
+    "reward": 54.42616507999999,
+    "robot_dx": -1.8660628,
+    "ball_dx_world": -4.4914146,
+    "robot_to_ball_dx": -3.411971,
+    "steps": 146
+  },
+  {
+    "episode": 19,
+    "reward": 6.404831710000001,
+    "robot_dx": 0.29807168,
+    "ball_dx_world": 8.000000006891383e-08,
+    "robot_to_ball_dx": -1.0846908,
+    "steps": 25
+  },
+  {
+    "episode": 20,
+    "reward": 12.453532339999999,
+    "robot_dx": -0.20888817,
+    "ball_dx_world": -0.7863863700000001,
+    "robot_to_ball_dx": -1.3641174,
+    "steps": 39
+  },
+  {
+    "episode": 21,
+    "reward": 6.428250759999998,
+    "robot_dx": 0.30114266,
+    "ball_dx_world": -4.000000008996807e-08,
+    "robot_to_ball_dx": -1.0877619,
+    "steps": 25
+  },
+  {
+    "episode": 22,
+    "reward": 26.624236299999996,
+    "robot_dx": -0.6403992,
+    "ball_dx_world": -3.3126988,
+    "robot_to_ball_dx": -3.4589188,
+    "steps": 65
+  },
+  {
+    "episode": 23,
+    "reward": 5.983354659999999,
+    "robot_dx": 0.27938253,
+    "ball_dx_world": 3.0000000039720476e-08,
+    "robot_to_ball_dx": -1.0660017,
+    "steps": 23
+  },
+  {
+    "episode": 24,
+    "reward": 12.00714132,
+    "robot_dx": -0.27861863,
+    "ball_dx_world": -1.0149827299999998,
+    "robot_to_ball_dx": -1.5229833,
+    "steps": 35
+  },
+  {
+    "episode": 25,
+    "reward": 6.374015949999999,
+    "robot_dx": 0.2933798,
+    "ball_dx_world": 1.1102230246251565e-16,
+    "robot_to_ball_dx": -1.079999,
+    "steps": 25
+  },
+  {
+    "episode": 26,
+    "reward": 11.939739009999998,
+    "robot_dx": -0.2858903,
+    "ball_dx_world": -0.9944874,
+    "robot_to_ball_dx": -1.4952163,
+    "steps": 35
+  },
+  {
+    "episode": 27,
+    "reward": 6.384438150000001,
+    "robot_dx": 0.29060522,
+    "ball_dx_world": 1.9999999989472883e-08,
+    "robot_to_ball_dx": -1.0772244,
+    "steps": 25
+  },
+  {
+    "episode": 28,
+    "reward": 25.883200639999995,
+    "robot_dx": -0.36544636,
+    "ball_dx_world": -3.68032576,
+    "robot_to_ball_dx": -4.1014986,
+    "steps": 62
+  },
+  {
+    "episode": 29,
+    "reward": 6.701343640000002,
+    "robot_dx": 0.3140657,
+    "ball_dx_world": -1.1102230246251565e-16,
+    "robot_to_ball_dx": -1.1006849,
+    "steps": 26
+  },
+  {
+    "episode": 30,
+    "reward": 13.355378439999997,
+    "robot_dx": -0.35760105,
+    "ball_dx_world": -1.25772955,
+    "robot_to_ball_dx": -1.6867477,
+    "steps": 37
+  },
+  {
+    "episode": 31,
+    "reward": 6.71952189,
+    "robot_dx": 0.31431544,
+    "ball_dx_world": 3.9999999978945766e-08,
+    "robot_to_ball_dx": -1.1009346,
+    "steps": 26
+  },
+  {
+    "episode": 32,
+    "reward": 21.577887119999996,
+    "robot_dx": -0.51882064,
+    "ball_dx_world": -2.57679644,
+    "robot_to_ball_dx": -2.844595,
+    "steps": 56
+  },
+  {
+    "episode": 33,
+    "reward": 6.7323751199999995,
+    "robot_dx": 0.3213301,
+    "ball_dx_world": -1.1102230246251565e-16,
+    "robot_to_ball_dx": -1.1079493,
+    "steps": 26
+  },
+  {
+    "episode": 34,
+    "reward": 23.189274040000004,
+    "robot_dx": -0.47070217,
+    "ball_dx_world": -2.98682547,
+    "robot_to_ball_dx": -3.3027425,
+    "steps": 59
+  },
+  {
+    "episode": 35,
+    "reward": 6.814396970000001,
+    "robot_dx": 0.33376426,
+    "ball_dx_world": -4.000000008996807e-08,
+    "robot_to_ball_dx": -1.1203835,
+    "steps": 26
+  },
+  {
+    "episode": 36,
+    "reward": 32.447210989999995,
+    "robot_dx": -0.2591711,
+    "ball_dx_world": -4.8636419,
+    "robot_to_ball_dx": -5.39109,
+    "steps": 78
+  },
+  {
+    "episode": 37,
+    "reward": 7.412044369999999,
+    "robot_dx": 0.38706505,
+    "ball_dx_world": 4.9999999918171056e-08,
+    "robot_to_ball_dx": -1.1736842,
+    "steps": 28
+  },
+  {
+    "episode": 38,
+    "reward": 23.907539220000004,
+    "robot_dx": -0.56933033,
+    "ball_dx_world": -3.36741983,
+    "robot_to_ball_dx": -3.5847087,
+    "steps": 56
+  },
+  {
+    "episode": 39,
+    "reward": 7.608121559999998,
+    "robot_dx": 0.391037,
+    "ball_dx_world": 1.1102230246251565e-16,
+    "robot_to_ball_dx": -1.1776562,
+    "steps": 29
+  },
+  {
+    "episode": 40,
+    "reward": 24.364917520000006,
+    "robot_dx": -0.33006543,
+    "ball_dx_world": -3.7519672300000004,
+    "robot_to_ball_dx": -4.208521,
+    "steps": 57
+  }
+]
