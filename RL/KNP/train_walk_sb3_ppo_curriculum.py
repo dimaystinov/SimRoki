@@ -99,6 +99,7 @@ class LongEvalCallback(BaseCallback):
         best_policy_path: Path,
         best_vecnorm_path: Path,
         eval_steps: int,
+        best_metric: str = "min_robot_dx",
         eval_freq: int = 10000,
         verbose: int = 0,
     ) -> None:
@@ -109,6 +110,7 @@ class LongEvalCallback(BaseCallback):
         self.best_policy_path = best_policy_path
         self.best_vecnorm_path = best_vecnorm_path
         self.eval_steps = eval_steps
+        self.best_metric = best_metric
         self.eval_freq = max(1, eval_freq)
         self.best_min_robot_dx = -float("inf")
         self.rows: list[dict[str, float | int | str]] = []
@@ -120,27 +122,29 @@ class LongEvalCallback(BaseCallback):
         row: dict[str, float | int | str] = {"stage": self.stage_name, "timesteps": int(self.num_timesteps), **metrics}
         self.rows.append(row)
         self.log_path.write_text(json.dumps(self.rows, indent=2), encoding="utf-8")
-        min_robot_dx = float(metrics["min_robot_dx"])
-        if self.stage_name in {STAGE_WALK, STAGE_SPEED_TRACKING, STAGE_ENDURANCE} and min_robot_dx > self.best_min_robot_dx:
-            self.best_min_robot_dx = min_robot_dx
+        selected_metric = float(metrics[self.best_metric])
+        if self.stage_name in {STAGE_WALK, STAGE_SPEED_TRACKING, STAGE_ENDURANCE} and selected_metric > self.best_min_robot_dx:
+            self.best_min_robot_dx = selected_metric
             self.model.save(str(self.best_policy_path))
             vec_norm = self.model.get_vec_normalize_env()
             if vec_norm is not None:
                 vec_norm.save(str(self.best_vecnorm_path))
             if self.verbose:
-                print(f"[long-eval] new best min_robot_dx={min_robot_dx:.3f} saved to {self.best_policy_path}")
+                print(f"[long-eval] new best {self.best_metric}={selected_metric:.3f} saved to {self.best_policy_path}")
         return True
 
     def _evaluate(self) -> dict[str, float]:
         current_vecnorm = self.model.get_vec_normalize_env()
         if current_vecnorm is not None:
             self.eval_env.obs_rms = current_vecnorm.obs_rms.copy()
-        right_dx = self._evaluate_direction(1.0)
-        left_dx = self._evaluate_direction(-1.0)
+        positive_dx = self._evaluate_direction(1.0)
+        negative_dx = self._evaluate_direction(-1.0)
         return {
-            "right_robot_dx": float(right_dx),
-            "left_robot_dx": float(left_dx),
-            "min_robot_dx": float(min(right_dx, left_dx)),
+            "positive_robot_dx": float(positive_dx),
+            "negative_robot_dx": float(negative_dx),
+            "right_robot_dx": float(positive_dx),
+            "left_robot_dx": float(negative_dx),
+            "min_robot_dx": float(min(positive_dx, negative_dx)),
         }
 
     def _evaluate_direction(self, direction: float) -> float:
@@ -189,6 +193,18 @@ def main() -> None:
     parser.add_argument("--walk-steps", type=int, default=60000)
     parser.add_argument("--speed-steps", type=int, default=80000)
     parser.add_argument("--endurance-steps", type=int, default=100000)
+    parser.add_argument("--balance-speed", type=float, default=0.05)
+    parser.add_argument("--balance-min-speed", type=float, default=0.03)
+    parser.add_argument("--balance-max-speed", type=float, default=0.08)
+    parser.add_argument("--walk-speed", type=float, default=0.16)
+    parser.add_argument("--walk-min-speed", type=float, default=0.12)
+    parser.add_argument("--walk-max-speed", type=float, default=0.18)
+    parser.add_argument("--speed-track-speed", type=float, default=0.22)
+    parser.add_argument("--speed-track-min-speed", type=float, default=0.14)
+    parser.add_argument("--speed-track-max-speed", type=float, default=0.26)
+    parser.add_argument("--endurance-speed", type=float, default=0.25)
+    parser.add_argument("--endurance-min-speed", type=float, default=0.18)
+    parser.add_argument("--endurance-max-speed", type=float, default=0.28)
     direction_group = parser.add_mutually_exclusive_group()
     direction_group.add_argument("--randomize-direction", action="store_true", dest="randomize_direction")
     direction_group.add_argument("--fixed-direction", action="store_false", dest="randomize_direction")
@@ -196,6 +212,12 @@ def main() -> None:
     parser.add_argument("--settle-steps", type=int, default=12)
     parser.add_argument("--eval-freq", type=int, default=10000)
     parser.add_argument("--eval-steps", type=int, default=600)
+    parser.add_argument(
+        "--best-metric",
+        type=str,
+        choices=["min_robot_dx", "positive_robot_dx", "negative_robot_dx", "right_robot_dx", "left_robot_dx"],
+        default="min_robot_dx",
+    )
     parser.add_argument(
         "--policy-path",
         type=Path,
@@ -322,10 +344,10 @@ def main() -> None:
     history: list[dict[str, int | str]] = []
     stages = [
         StageSpec(STAGE_STAND, args.stand_steps, 0.0, "shaped", 0.0, 0.0),
-        StageSpec(STAGE_BALANCE, args.balance_steps, 0.05, "shaped", 0.03, 0.08),
-        StageSpec(STAGE_WALK, args.walk_steps, 0.16, "shaped", 0.12, 0.18),
-        StageSpec(STAGE_SPEED_TRACKING, args.speed_steps, 0.22, "shaped", 0.14, 0.26),
-        StageSpec(STAGE_ENDURANCE, args.endurance_steps, 0.25, "shaped", 0.18, 0.28),
+        StageSpec(STAGE_BALANCE, args.balance_steps, args.balance_speed, "shaped", args.balance_min_speed, args.balance_max_speed),
+        StageSpec(STAGE_WALK, args.walk_steps, args.walk_speed, "shaped", args.walk_min_speed, args.walk_max_speed),
+        StageSpec(STAGE_SPEED_TRACKING, args.speed_steps, args.speed_track_speed, "shaped", args.speed_track_min_speed, args.speed_track_max_speed),
+        StageSpec(STAGE_ENDURANCE, args.endurance_steps, args.endurance_speed, "shaped", args.endurance_min_speed, args.endurance_max_speed),
     ]
     long_eval_callback = LongEvalCallback(
         stage_name=STAGE_STAND,
@@ -334,12 +356,15 @@ def main() -> None:
         best_policy_path=args.best_policy_path,
         best_vecnorm_path=args.best_vecnorm_path,
         eval_steps=args.eval_steps,
+        best_metric=args.best_metric,
         eval_freq=args.eval_freq,
         verbose=1,
     )
 
     total_seen = 0
     for stage in stages:
+        if stage.timesteps <= 0:
+            continue
         set_stage(vec_env, stage)
         set_stage(eval_env, stage)
         progress_callback = CurriculumProgressCallback(stage.name, args.log_path)

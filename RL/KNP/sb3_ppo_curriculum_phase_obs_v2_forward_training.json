@@ -1,0 +1,17 @@
+[
+  {
+    "stage": "walk",
+    "timesteps": 600000,
+    "total_seen": 600000
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1200000,
+    "total_seen": 1800000
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 1200000,
+    "total_seen": 3000000
+  }
+]

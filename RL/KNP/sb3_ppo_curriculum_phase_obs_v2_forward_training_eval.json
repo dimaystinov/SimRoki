@@ -1,0 +1,227 @@
+[
+  {
+    "stage": "walk",
+    "timesteps": 480000,
+    "positive_robot_dx": 0.8268158997,
+    "negative_robot_dx": 0.2009480924,
+    "right_robot_dx": 0.8268158997,
+    "left_robot_dx": 0.2009480924,
+    "min_robot_dx": 0.2009480924
+  },
+  {
+    "stage": "walk",
+    "timesteps": 600000,
+    "positive_robot_dx": 0.9618153997,
+    "negative_robot_dx": 0.1991655724,
+    "right_robot_dx": 0.9618153997,
+    "left_robot_dx": 0.1991655724,
+    "min_robot_dx": 0.1991655724
+  },
+  {
+    "stage": "walk",
+    "timesteps": 720000,
+    "positive_robot_dx": 0.9397776397,
+    "negative_robot_dx": 0.1956312224,
+    "right_robot_dx": 0.9397776397,
+    "left_robot_dx": 0.1956312224,
+    "min_robot_dx": 0.1956312224
+  },
+  {
+    "stage": "walk",
+    "timesteps": 840000,
+    "positive_robot_dx": 0.9763237597,
+    "negative_robot_dx": 0.1926807924,
+    "right_robot_dx": 0.9763237597,
+    "left_robot_dx": 0.1926807924,
+    "min_robot_dx": 0.1926807924
+  },
+  {
+    "stage": "walk",
+    "timesteps": 960000,
+    "positive_robot_dx": 0.9700068597,
+    "negative_robot_dx": 0.1933760124,
+    "right_robot_dx": 0.9700068597,
+    "left_robot_dx": 0.1933760124,
+    "min_robot_dx": 0.1933760124
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1080000,
+    "positive_robot_dx": 0.9113535597,
+    "negative_robot_dx": 1.1937900424,
+    "right_robot_dx": 0.9113535597,
+    "left_robot_dx": 1.1937900424,
+    "min_robot_dx": 0.9113535597
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1200000,
+    "positive_robot_dx": 0.9808775497,
+    "negative_robot_dx": 1.1954067424,
+    "right_robot_dx": 0.9808775497,
+    "left_robot_dx": 1.1954067424,
+    "min_robot_dx": 0.9808775497
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1320000,
+    "positive_robot_dx": 0.9973056996999999,
+    "negative_robot_dx": 1.3409934424,
+    "right_robot_dx": 0.9973056996999999,
+    "left_robot_dx": 1.3409934424,
+    "min_robot_dx": 0.9973056996999999
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1440000,
+    "positive_robot_dx": 0.9745277997,
+    "negative_robot_dx": 0.6355999424,
+    "right_robot_dx": 0.9745277997,
+    "left_robot_dx": 0.6355999424,
+    "min_robot_dx": 0.6355999424
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1560000,
+    "positive_robot_dx": 1.1224717997,
+    "negative_robot_dx": 2.7434610424,
+    "right_robot_dx": 1.1224717997,
+    "left_robot_dx": 2.7434610424,
+    "min_robot_dx": 1.1224717997
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1680000,
+    "positive_robot_dx": 0.9546910997,
+    "negative_robot_dx": 0.6362102124,
+    "right_robot_dx": 0.9546910997,
+    "left_robot_dx": 0.6362102124,
+    "min_robot_dx": 0.6362102124
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1800000,
+    "positive_robot_dx": 1.0015710297,
+    "negative_robot_dx": 0.7095016923999999,
+    "right_robot_dx": 1.0015710297,
+    "left_robot_dx": 0.7095016923999999,
+    "min_robot_dx": 0.7095016923999999
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 1920000,
+    "positive_robot_dx": 0.9890148397,
+    "negative_robot_dx": 0.6604111824,
+    "right_robot_dx": 0.9890148397,
+    "left_robot_dx": 0.6604111824,
+    "min_robot_dx": 0.6604111824
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 2040000,
+    "positive_robot_dx": 0.9743896397,
+    "negative_robot_dx": -0.0416148336,
+    "right_robot_dx": 0.9743896397,
+    "left_robot_dx": -0.0416148336,
+    "min_robot_dx": -0.0416148336
+  },
+  {
+    "stage": "speed_tracking",
+    "timesteps": 2160000,
+    "positive_robot_dx": 0.9479818997,
+    "negative_robot_dx": -0.0471724006,
+    "right_robot_dx": 0.9479818997,
+    "left_robot_dx": -0.0471724006,
+    "min_robot_dx": -0.0471724006
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 2280000,
+    "positive_robot_dx": 0.9432557997,
+    "negative_robot_dx": 0.3663223724,
+    "right_robot_dx": 0.9432557997,
+    "left_robot_dx": 0.3663223724,
+    "min_robot_dx": 0.3663223724
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 2400000,
+    "positive_robot_dx": 0.9393942997,
+    "negative_robot_dx": 0.4557371424,
+    "right_robot_dx": 0.9393942997,
+    "left_robot_dx": 0.4557371424,
+    "min_robot_dx": 0.4557371424
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 2520000,
+    "positive_robot_dx": 0.9535725997,
+    "negative_robot_dx": 0.8698722724,
+    "right_robot_dx": 0.9535725997,
+    "left_robot_dx": 0.8698722724,
+    "min_robot_dx": 0.8698722724
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 2640000,
+    "positive_robot_dx": 0.9329541597,
+    "negative_robot_dx": 0.9121779423999999,
+    "right_robot_dx": 0.9329541597,
+    "left_robot_dx": 0.9121779423999999,
+    "min_robot_dx": 0.9121779423999999
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 2760000,
+    "positive_robot_dx": 0.8819242997,
+    "negative_robot_dx": -0.1398295276,
+    "right_robot_dx": 0.8819242997,
+    "left_robot_dx": -0.1398295276,
+    "min_robot_dx": -0.1398295276
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 2880000,
+    "positive_robot_dx": 0.8374257397,
+    "negative_robot_dx": -0.1380012276,
+    "right_robot_dx": 0.8374257397,
+    "left_robot_dx": -0.1380012276,
+    "min_robot_dx": -0.1380012276
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 3000000,
+    "positive_robot_dx": 0.8372014497,
+    "negative_robot_dx": -0.1307494776,
+    "right_robot_dx": 0.8372014497,
+    "left_robot_dx": -0.1307494776,
+    "min_robot_dx": -0.1307494776
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 3120000,
+    "positive_robot_dx": 0.8123785997,
+    "negative_robot_dx": -0.1300846576,
+    "right_robot_dx": 0.8123785997,
+    "left_robot_dx": -0.1300846576,
+    "min_robot_dx": -0.1300846576
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 3240000,
+    "positive_robot_dx": 0.8064351997,
+    "negative_robot_dx": -0.1270142776,
+    "right_robot_dx": 0.8064351997,
+    "left_robot_dx": -0.1270142776,
+    "min_robot_dx": -0.1270142776
+  },
+  {
+    "stage": "endurance",
+    "timesteps": 3360000,
+    "positive_robot_dx": 0.8003599996999999,
+    "negative_robot_dx": -0.1262142576,
+    "right_robot_dx": 0.8003599996999999,
+    "left_robot_dx": -0.1262142576,
+    "min_robot_dx": -0.1262142576
+  }
+]

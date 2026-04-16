@@ -1,0 +1,39 @@
+@echo off
+cd /d C:\Users\root\Documents\SimRoki\RL\KNP
+python C:\Users\root\Documents\SimRoki\RL\KNP\train_walk_sb3_ppo_curriculum.py ^
+  --transport ffi ^
+  --dll-path C:\Users\root\Documents\SimRoki\target\release\sim_core.dll ^
+  --config-path C:\Users\root\Documents\SimRoki\robot_config.toml ^
+  --resume-from C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v1_best.zip ^
+  --resume-vecnorm-from C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v1_best_vecnorm.pkl ^
+  --fixed-direction ^
+  --num-envs 24 ^
+  --repeat-steps 2 ^
+  --learning-rate 4e-5 ^
+  --ent-coef 0.008 ^
+  --n-steps 512 ^
+  --batch-size 2048 ^
+  --stand-steps 0 ^
+  --balance-steps 0 ^
+  --walk-steps 600000 ^
+  --speed-steps 1200000 ^
+  --endurance-steps 1200000 ^
+  --walk-speed 0.16 ^
+  --walk-min-speed 0.14 ^
+  --walk-max-speed 0.18 ^
+  --speed-track-speed 0.20 ^
+  --speed-track-min-speed 0.16 ^
+  --speed-track-max-speed 0.22 ^
+  --endurance-speed 0.22 ^
+  --endurance-min-speed 0.18 ^
+  --endurance-max-speed 0.24 ^
+  --eval-freq 5000 ^
+  --eval-steps 800 ^
+  --best-metric positive_robot_dx ^
+  --policy-path C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v2_forward_policy.zip ^
+  --vecnorm-path C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v2_forward_vecnorm.pkl ^
+  --log-path C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v2_forward_training.json ^
+  --best-policy-path C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v2_forward_best.zip ^
+  --best-vecnorm-path C:\Users\root\Documents\SimRoki\RL\KNP\sb3_ppo_curriculum_phase_obs_v2_forward_best_vecnorm.pkl ^
+  1> C:\Users\root\Documents\SimRoki\RL\KNP\train_phase_obs_v2_forward_stdout.log ^
+  2> C:\Users\root\Documents\SimRoki\RL\KNP\train_phase_obs_v2_forward_stderr.log

@@ -1,56 +1,44 @@
 [
   {
-    "stage": "speed_tracking",
-    "timesteps": 1029312,
-    "ep_reward_mean": -403.67664436,
-    "ep_len_mean": 39.81
+    "stage": "endurance",
+    "timesteps": 2233536,
+    "ep_reward_mean": -543.30097819,
+    "ep_len_mean": 42.92
   },
   {
-    "stage": "speed_tracking",
-    "timesteps": 1149312,
-    "ep_reward_mean": -408.03338261,
-    "ep_len_mean": 40.76
+    "stage": "endurance",
+    "timesteps": 2353536,
+    "ep_reward_mean": -503.20467358,
+    "ep_len_mean": 39.73
   },
   {
-    "stage": "speed_tracking",
-    "timesteps": 1269312,
-    "ep_reward_mean": -391.67236617000003,
-    "ep_len_mean": 38.77
+    "stage": "endurance",
+    "timesteps": 2473536,
+    "ep_reward_mean": -492.5806971,
+    "ep_len_mean": 38.51
   },
   {
-    "stage": "speed_tracking",
-    "timesteps": 1389312,
-    "ep_reward_mean": -380.78436265999994,
-    "ep_len_mean": 38.08
+    "stage": "endurance",
+    "timesteps": 2593536,
+    "ep_reward_mean": -444.8685921,
+    "ep_len_mean": 33.34
   },
   {
-    "stage": "speed_tracking",
-    "timesteps": 1509312,
-    "ep_reward_mean": -370.26552035000003,
-    "ep_len_mean": 36.23
+    "stage": "endurance",
+    "timesteps": 2713536,
+    "ep_reward_mean": -475.04601025999995,
+    "ep_len_mean": 36.91
   },
   {
-    "stage": "speed_tracking",
-    "timesteps": 1629312,
-    "ep_reward_mean": -381.38254122,
-    "ep_len_mean": 38.53
+    "stage": "endurance",
+    "timesteps": 2833536,
+    "ep_reward_mean": -421.38428959,
+    "ep_len_mean": 35.2
   },
   {
-    "stage": "speed_tracking",
-    "timesteps": 1749312,
-    "ep_reward_mean": -396.35388389,
-    "ep_len_mean": 41.13
-  },
-  {
-    "stage": "speed_tracking",
-    "timesteps": 1869312,
-    "ep_reward_mean": -392.56552793000003,
-    "ep_len_mean": 41.47
-  },
-  {
-    "stage": "speed_tracking",
-    "timesteps": 1989312,
-    "ep_reward_mean": -371.37220885000005,
-    "ep_len_mean": 38.09
+    "stage": "endurance",
+    "timesteps": 2953536,
+    "ep_reward_mean": -399.48610097,
+    "ep_len_mean": 32.6
   }
 ]
