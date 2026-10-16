@@ -1,6 +1,7 @@
 mod config;
 mod ffi;
 mod kinematics;
+pub mod rabbit;
 
 use nalgebra::{point, vector};
 use rapier2d::prelude::*;
@@ -122,6 +123,10 @@ pub struct SimulationState {
     pub walk_direction: f32,
     pub walk_enabled: bool,
     pub walk_target_speed: f32,
+    pub walk_controller: String,
+    pub planned_steps: u64,
+    pub planned_status: String,
+    pub planned_phase: Option<f64>,
     pub walk_speed: f32,
     pub walk_support_state: String,
     pub walk_state_time: f32,
@@ -375,6 +380,17 @@ enum WalkSupportState {
     SingleSupportRight,
 }
 
+struct RabbitRuntime {
+    model: rabbit::RabbitModel,
+    trajectory: rabbit::RabbitTrajectory,
+    goal: Option<rabbit::RabbitTrajectory>,
+    stance_left: bool,
+    starting: bool,
+    stopping: bool,
+    elapsed: f32,
+    steps: u64,
+}
+
 pub struct Simulation {
     pipeline: PhysicsPipeline,
     gravity: Vector<Real>,
@@ -414,8 +430,11 @@ pub struct Simulation {
     rl_residual_action_deg: [f32; 4],
     rl_target_direction: f32,
     directional_walk_enabled: bool,
+    rabbit_runtime: Option<RabbitRuntime>,
     walk_target_speed: f32,
     walk_speed: f32,
+    walk_measured_speed: f32,
+    walk_elapsed: f32,
     walk_phase: f32,
     walk_support_state: WalkSupportState,
     walk_state_time: f32,
@@ -531,8 +550,11 @@ impl Simulation {
             rl_residual_action_deg: [0.0; 4],
             rl_target_direction: 1.0,
             directional_walk_enabled: false,
-            walk_target_speed: config.walk.max_speed_mps,
+            rabbit_runtime: None,
+            walk_target_speed: config.walk.nominal_speed_mps.min(config.walk.max_speed_mps),
             walk_speed: 0.0,
+            walk_measured_speed: 0.0,
+            walk_elapsed: 0.0,
             walk_phase: 0.0,
             walk_support_state: WalkSupportState::DoubleSupportLeft,
             walk_state_time: 0.0,
@@ -832,13 +854,14 @@ impl Simulation {
     }
 
     pub fn reset_robot(&mut self) {
+        let planned_active=self.rabbit_runtime.is_some();
         let gains = self.servo_gains();
         let direction = self.rl_target_direction;
         let walk_enabled = self.directional_walk_enabled;
         let walk_target_speed = self.walk_target_speed;
         *self = Self::new_robot_with_config_and_suspension(self.config.clone(), self.robot_suspended);
         self.rl_target_direction = direction;
-        self.directional_walk_enabled = walk_enabled;
+        self.directional_walk_enabled = walk_enabled && !planned_active;
         self.walk_target_speed = walk_target_speed;
         self.walk_phase = 0.0;
         self.refresh_walk_anchors_from_pose();
@@ -996,6 +1019,7 @@ impl Simulation {
     }
 
     pub fn apply_pose(&mut self, pose: PoseCommand) {
+        self.rabbit_runtime=None;self.directional_walk_enabled=false;
         let mut targets = ServoTargets::default();
         targets.right_hip = pose.joints.get("right_hip").copied();
         targets.right_knee = pose.joints.get("right_knee").copied();
@@ -1005,6 +1029,7 @@ impl Simulation {
     }
 
     pub fn set_gait(&mut self, gait: GaitCommand) {
+        self.rabbit_runtime=None;self.directional_walk_enabled=false;
         let start_targets = self.current_targets_map();
         self.gait = Some(GaitRuntime {
             phases: gait.phases,
@@ -1016,6 +1041,7 @@ impl Simulation {
     }
 
     pub fn set_motion_sequence_deg(&mut self, command: MotionSequenceCommand) {
+        self.rabbit_runtime=None;self.directional_walk_enabled=false;
         let frames = command
             .frames
             .into_iter()
@@ -1228,10 +1254,16 @@ impl Simulation {
     }
 
     pub fn set_directional_walk_enabled(&mut self, enabled: bool) {
+        if enabled {if let Some(runtime)=self.rabbit_runtime.as_mut() {runtime.stopping=false;}}
+        if !enabled {
+            if let Some(runtime)=self.rabbit_runtime.as_mut() {runtime.stopping=true;return;}
+        }
         let was_enabled = self.directional_walk_enabled;
         self.directional_walk_enabled = enabled;
         if enabled {
             if !was_enabled {
+                self.walk_measured_speed = 0.0;
+                self.walk_elapsed = 0.0;
                 self.refresh_walk_anchors_from_pose();
             }
         } else {
@@ -1248,6 +1280,11 @@ impl Simulation {
     }
 
     pub fn set_walk_target_speed(&mut self, speed_mps: f32) {
+        if !speed_mps.is_finite() {return;}
+        if speed_mps>0.0 && self.rabbit_runtime.is_some() {
+            let _=self.set_rabbit_nominal_speed(speed_mps.clamp(0.3,0.6));return;
+        }
+        if speed_mps<=0.0 && self.rabbit_runtime.is_some() {self.set_directional_walk_enabled(false);}
         self.walk_target_speed = speed_mps.clamp(0.0, self.config.walk.max_speed_mps.max(0.1));
     }
 
@@ -1467,7 +1504,144 @@ impl Simulation {
         self.apply_pose(PoseCommand { base: None, joints });
     }
 
+    /// Select the point-foot virtual-constraint controller without changing physical state.
+    pub fn load_rabbit_trajectory(&mut self,json:&str)->Result<(),String> {
+        if self.scene!=SceneKind::Robot || self.robot_suspended {return Err("RABBIT needs an unsuspended robot scene".into());}
+        if self.rl_target_direction<0.0 {return Err("RABBIT trajectories currently support forward walking only".into());}
+        let trajectory=rabbit::RabbitTrajectory::from_json(json)?;
+        let model=rabbit::RabbitModel::new(&self.config);
+        model.validate_trajectory(&trajectory)?;
+        let startup=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json"))?;
+        model.validate_trajectory(&startup)?;
+        let stance_left=self.foot_world(LegSide::Left).zip(self.foot_world(LegSide::Right))
+            .map(|(l,r)|l[0]>r[0]).unwrap_or(true);
+        self.gait=None;self.motion_sequence=None;self.rl_residual_enabled=false;
+        self.set_directional_walk_enabled(true);
+        self.rabbit_runtime=Some(RabbitRuntime{model,trajectory:startup,goal:Some(trajectory),stance_left,starting:true,stopping:false,elapsed:0.0,steps:0});
+        Ok(())
+    }
+
+    /// Explicit experiment reset to the optimized orbit, including velocities.
+    /// Never called as recovery or during ordinary walking.
+    pub fn reset_to_rabbit_orbit(&mut self,json:&str)->Result<(),String> {
+        let p=rabbit::RabbitTrajectory::from_json(json)?;
+        rabbit::RabbitModel::new(&self.config).validate_trajectory(&p)?;
+        let q=p.q[0].map(|x|x as f32);let v=p.dq[0].map(|x|x as f32);
+        let r=&self.config.robot;let ls=r.shin.length;let lt=r.thigh.length;let lb=r.torso.length;
+        let up=|a:f32,l:f32|vector![-l*a.sin(),l*a.cos()];
+        let dup=|a:f32,l:f32,w:f32|vector![-l*a.cos()*w,-l*a.sin()*w];
+        let knee=up(q[0],ls);let hip=knee+up(q[1],lt);let swing_knee=hip-up(q[3],lt);
+        let vk=dup(q[0],ls,v[0]);let vh=vk+dup(q[1],lt,v[1]);let vsk=vh-dup(q[3],lt,v[3]);
+        let mut pos=[knee*0.5,(knee+hip)*0.5,hip+up(q[2],lb*0.5),
+            (hip+swing_knee)*0.5,swing_knee-up(q[4],ls*0.5)];
+        let vel=[vk*0.5,(vk+vh)*0.5,vh+dup(q[2],lb*0.5,v[2]),
+            (vh+vsk)*0.5,vsk-dup(q[4],ls*0.5,v[4])];
+        let lengths=[ls,lt,lb,lt,ls];let widths=[r.shin.width,r.thigh.width,r.torso.width,r.thigh.width,r.shin.width];
+        let clearance=(0..5).map(|i|0.5*(lengths[i]*q[i].cos().abs()+widths[i]*q[i].sin().abs())-pos[i].y)
+            .fold(0.0_f32,f32::max)+0.0001;
+        for point in &mut pos {point.y+=clearance;}
+        let pose=|i:usize|BodyPoseConfig{x:pos[i].x,y:pos[i].y,angle:q[i]};
+        let mut config=self.config.clone();
+        config.robot.initial_pose=InitialPoseConfig{left_shin:pose(0),left_thigh:pose(1),torso:pose(2),right_thigh:pose(3),right_shin:pose(4)};
+        config.servo.initial_targets=JointAnglesConfig{left_hip:q[1]-q[2],left_knee:q[0]-q[1],right_hip:q[3]-q[2],right_knee:q[4]-q[3]};
+        let canonical=self.canonical_initial_pose.clone();let targets=self.canonical_initial_targets;
+        let mut next=Self::from_config(config);let robot=next.robot.as_ref().unwrap();
+        for (i,handle) in [robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin].iter().enumerate() {
+            next.bodies[*handle].set_linvel(vel[i],true);next.bodies[*handle].set_angvel(v[i],true);
+        }
+        next.load_rabbit_trajectory(json)?;next.rabbit_runtime.as_mut().unwrap().stance_left=true;next.rabbit_runtime.as_mut().unwrap().starting=false;
+        {let runtime=next.rabbit_runtime.as_mut().unwrap();runtime.trajectory=runtime.goal.take().unwrap();}
+        next.canonical_initial_pose=canonical.clone();next.canonical_initial_targets=targets;
+        next.config.robot.initial_pose=canonical;next.config.servo.initial_targets=targets;
+        *self=next;Ok(())
+    }
+
+    /// Change the nominal point-foot orbit speed; transitions occur at touchdown.
+    /// Actual Rapier speed is measured separately because contact geometry differs.
+    pub fn set_rabbit_nominal_speed(&mut self,speed:f32)->Result<(),String> {
+        if !speed.is_finite() || !(0.3..=0.6).contains(&speed) {
+            return Err("planned nominal speed must be between 0.3 and 0.6 m/s".into());
+        }
+        let slow=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-030.json"))?;
+        let fast=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json"))?;
+        let runtime=self.rabbit_runtime.as_mut().ok_or("RABBIT controller is not enabled")?;
+        runtime.goal=Some(if speed>0.5 {
+            let higher=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-060-high.json"))?;
+            fast.blend(&higher,((speed-0.5)/0.1) as f64)
+        } else {slow.blend(&fast,((speed-0.3)/0.2) as f64)});
+        self.walk_target_speed=speed;Ok(())
+    }
+
+    pub fn disable_rabbit_controller(&mut self) {
+        self.set_directional_walk_enabled(false);
+    }
+
+    fn apply_rabbit_forces(&mut self)->bool {
+        let Some(mut runtime)=self.rabbit_runtime.take() else {return false;};
+        if runtime.stopping && self.foot_contact(true) && self.foot_contact(false) {
+            if let Some(robot)=self.robot.as_mut() {
+                for servo in robot.servos.values_mut() {
+                    let angle=self.bodies[servo.child].rotation().angle()-self.bodies[servo.parent].rotation().angle();
+                    servo.target=angle;servo.commanded_target=angle;servo.integral_error=0.0;
+                }
+            }
+            self.directional_walk_enabled=false;self.walk_speed=0.0;return false;
+        }
+        if !self.directional_walk_enabled {return false;}
+        if runtime.starting {
+            runtime.elapsed+=self.dt();
+            if runtime.elapsed>0.6 && self.foot_contact(true) && self.foot_contact(false) {
+                runtime.stance_left=self.foot_world(LegSide::Left).unwrap()[0]>self.foot_world(LegSide::Right).unwrap()[0];
+                runtime.starting=false;runtime.elapsed=0.0;
+            } else {self.rabbit_runtime=Some(runtime);return false;}
+        }
+        let Some(robot)=self.robot.as_ref() else {return false;};
+        let torso=&self.bodies[robot.torso];
+        if torso.translation().y<0.7 || torso.rotation().angle().abs()>1.0 {
+            self.directional_walk_enabled=false;return false;
+        }
+        let dt=self.dt();runtime.elapsed+=dt;
+        if runtime.elapsed>5.0 {self.directional_walk_enabled=false;return false;}
+        let left=self.foot_world(LegSide::Left).unwrap();let right=self.foot_world(LegSide::Right).unwrap();
+        let (stance,swing)=if runtime.stance_left {(left,right)}else{(right,left)};
+        if runtime.elapsed>0.12 && swing[0]>stance[0]+0.08 && self.foot_contact(!runtime.stance_left) {
+            runtime.stance_left=!runtime.stance_left;runtime.elapsed=0.0;runtime.steps+=1;
+            if runtime.steps>5 {
+                if let Some(goal)=runtime.goal.as_ref() {
+                    runtime.trajectory=runtime.trajectory.blend(goal,0.10);
+                }
+            }
+        }
+        let handles=if runtime.stance_left {
+            [robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]
+        }else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+        let q=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64);
+        let v=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].angvel() as f64);
+        let Some(torques)=runtime.model.control(&q,&v,&runtime.trajectory,100.0,20.0) else {
+            self.directional_walk_enabled=false;return false;
+        };
+        let names=if runtime.stance_left {[JointName::LeftHip,JointName::LeftKnee,JointName::RightHip,JointName::RightKnee]}
+            else{[JointName::RightHip,JointName::RightKnee,JointName::LeftHip,JointName::LeftKnee]};
+        let phase=runtime.model.phase(&q,&runtime.trajectory);
+        let reference=runtime.model.b.transpose()*runtime.trajectory.sample(phase).0;
+        let robot=self.robot.as_mut().unwrap();
+        for (i,name) in names.iter().enumerate() {
+            let servo=robot.servos.get_mut(name).unwrap();
+            let velocity=self.bodies[servo.child].angvel()-self.bodies[servo.parent].angvel();
+            let mut torque=(torques[i] as f32).clamp(-self.servo_max_torque,self.servo_max_torque);
+            // Do not accelerate an already overspeed joint in the same direction.
+            if velocity.abs()>self.servo_max_speed_rad_s && torque*velocity>0.0 {torque=0.0;}
+            servo.last_torque=torque;servo.target=reference[i] as f32;servo.commanded_target=servo.target;servo.integral_error=0.0;
+            self.bodies[servo.parent].apply_torque_impulse(-torque*dt,true);
+            self.bodies[servo.child].apply_torque_impulse(torque*dt,true);
+        }
+        self.walk_support_state=if runtime.stance_left {WalkSupportState::SingleSupportLeft}else{WalkSupportState::SingleSupportRight};
+        self.walk_state_time=runtime.elapsed;
+        self.rabbit_runtime=Some(runtime);true
+    }
+
     fn apply_servo_forces(&mut self) {
+        if self.apply_rabbit_forces() { return; }
         let dt = self.dt();
         let integral_limit = self.config.servo.integral_limit;
         let Some(robot) = &mut self.robot else {
@@ -1584,6 +1758,13 @@ impl Simulation {
             walk_direction: self.rl_target_direction,
             walk_enabled: self.directional_walk_enabled,
             walk_target_speed: self.walk_target_speed,
+            walk_controller: if self.rabbit_runtime.is_some() {"rabbit_virtual_constraints"}else{"ik_feedback"}.into(),
+            planned_steps: self.rabbit_runtime.as_ref().map_or(0,|r|r.steps),
+            planned_status: self.rabbit_runtime.as_ref().map_or("idle",|r|if r.stopping {"stopping"}else if r.starting {"starting"}else{"walking"}).into(),
+            planned_phase: self.rabbit_runtime.as_ref().and_then(|r|self.robot.as_ref().map(|robot|{
+                let handles=if r.stance_left {[robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]}else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+                r.model.phase(&nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64),&r.trajectory)
+            })),
             walk_speed: self.walk_speed,
             walk_support_state: format!("{:?}", self.walk_support_state),
             walk_state_time: self.walk_state_time,
@@ -1728,7 +1909,7 @@ impl Simulation {
             self.walk_right_swing_start = right;
             self.walk_right_touchdown_x = right[0];
         }
-        self.walk_support_state = if opposite_leg(self.front_leg_side(self.rl_target_direction)) == LegSide::Left {
+        self.walk_support_state = if self.front_leg_side(self.rl_target_direction) == LegSide::Left {
             WalkSupportState::DoubleSupportLeft
         } else {
             WalkSupportState::DoubleSupportRight
@@ -1806,8 +1987,21 @@ impl Simulation {
         support_shift: f32,
         spread: f32,
     ) -> f32 {
-        let local_step_advance = (1.10 * step_length + 0.55 * spread + 0.35 * support_shift).clamp(0.06, 0.22);
-        support_x + direction * local_step_advance
+        let _ = (step_length, spread, support_shift);
+        let Some(base) = self.robot.as_ref().and_then(|r| self.body_state(r.torso)) else {
+            return support_x;
+        };
+        let desired_velocity = direction * self.walk_speed;
+        // Raibert-style placement: move the landing point forward when too
+        // fast, backward when too slow. Use measured velocity, not just a clock.
+        let landing = base.x + 0.18 * base.vx
+            + self.config.walk.velocity_kp * 0.18 * (base.vx - desired_velocity)
+            + direction * 0.025;
+        let advance = ((landing - support_x) * direction)
+            .max(self.config.walk.nominal_step_length_m * 0.65)
+            .clamp(0.02, 0.24);
+        support_x + direction * advance
+
     }
 
     fn begin_single_support(
@@ -1843,12 +2037,12 @@ impl Simulation {
     fn begin_double_support(&mut self, lead_side: LegSide) {
         match lead_side {
             LegSide::Left => {
-                self.walk_left_anchor = [self.walk_left_touchdown_x, GROUND_Y];
+                self.walk_left_anchor = self.foot_world(LegSide::Left).map(|p| [p[0], GROUND_Y]).unwrap_or([self.walk_left_touchdown_x, GROUND_Y]);
                 self.walk_left_swing_start = self.walk_left_anchor;
                 self.walk_support_state = WalkSupportState::DoubleSupportLeft;
             }
             LegSide::Right => {
-                self.walk_right_anchor = [self.walk_right_touchdown_x, GROUND_Y];
+                self.walk_right_anchor = self.foot_world(LegSide::Right).map(|p| [p[0], GROUND_Y]).unwrap_or([self.walk_right_touchdown_x, GROUND_Y]);
                 self.walk_right_swing_start = self.walk_right_anchor;
                 self.walk_support_state = WalkSupportState::DoubleSupportRight;
             }
@@ -1881,7 +2075,7 @@ impl Simulation {
     }
 
     fn apply_directional_walk_targets(&mut self) {
-        if !self.directional_walk_enabled || self.motion_sequence.is_some() || self.gait.is_some() {
+        if self.rabbit_runtime.as_ref().is_some_and(|r|!r.starting) || !self.directional_walk_enabled || self.motion_sequence.is_some() || self.gait.is_some() {
             return;
         }
 
@@ -1901,7 +2095,8 @@ impl Simulation {
         self.kick_cooldown = (self.kick_cooldown - dt).max(0.0);
 
         if base.y < 0.45 || base.angle.abs() > 1.6 {
-            self.emergency_stand_reset();
+            self.directional_walk_enabled = false;
+            self.walk_speed = 0.0;
             return;
         }
 
@@ -1923,7 +2118,8 @@ impl Simulation {
                 self.walk_phase = 0.0;
                 self.refresh_walk_anchors_from_pose();
             } else if self.recovery_timer > 2.2 {
-                self.emergency_stand_reset();
+                self.directional_walk_enabled = false;
+                self.walk_speed = 0.0;
             }
             return;
         }
@@ -1934,24 +2130,24 @@ impl Simulation {
         let speed_step = max_accel * dt;
         self.walk_speed += speed_error.clamp(-speed_step, speed_step);
 
-        let speed_ratio = (self.walk_speed / walk_cfg.max_speed_mps.max(0.1)).clamp(0.0, 1.0);
+        // Filter impact spikes before adapting cadence to measured progress.
+        self.walk_measured_speed += (forward_velocity.max(0.0) - self.walk_measured_speed)
+            * (dt / (0.20 + dt));
+        self.walk_elapsed += dt;
+        let cadence_blend = smoothstep01((self.walk_elapsed - 3.0) / 2.0);
+        let cadence_speed = self.walk_speed.max(lerp(self.walk_speed, self.walk_measured_speed, cadence_blend));
+        let speed_ratio = (cadence_speed / walk_cfg.max_speed_mps.max(0.1)).clamp(0.0, 1.0);
         let cycle_hz = (walk_cfg.cycle_frequency_hz
             + (walk_cfg.max_cycle_frequency_hz - walk_cfg.cycle_frequency_hz) * speed_ratio)
             * (0.90 + 0.10 * speed_ratio);
         let (double_support_duration, single_support_duration) = self.walk_state_durations(cycle_hz, speed_ratio);
         self.walk_state_time += dt;
 
-        let lean_sign = if forward_velocity.abs() > 0.05 {
-            forward_velocity.signum()
-        } else {
-            direction
-        };
-        let desired_torso_angle = (lean_sign
+        // Positive world rotation leans backwards when walking to the right.
+        let desired_torso_angle = -direction
             * (self.walk_speed * walk_cfg.torso_forward_lean_per_speed)
-                .clamp(0.0, walk_cfg.torso_forward_lean_max_rad))
-            .clamp(-walk_cfg.torso_upright_limit_rad, walk_cfg.torso_upright_limit_rad);
-        let torso_angle_error = (base.angle - desired_torso_angle)
-            .clamp(-walk_cfg.torso_upright_limit_rad, walk_cfg.torso_upright_limit_rad);
+                .clamp(0.0, walk_cfg.torso_forward_lean_max_rad);
+        let torso_angle_error = normalize_angle(base.angle - desired_torso_angle);
         let torso_feedback =
             (-walk_cfg.torso_pitch_kp * torso_angle_error - walk_cfg.torso_pitch_kd * base.omega).clamp(-0.16, 0.16);
         let velocity_feedback =
@@ -1967,10 +2163,14 @@ impl Simulation {
         let swing_retraction_m = (0.012 + 0.022 * speed_ratio).clamp(0.012, 0.036);
         let spread = walk_cfg.stance_foot_spread_m.clamp(0.08, 0.30);
 
-        while self.walk_state_time
-            >= self.current_walk_state_duration(double_support_duration, single_support_duration)
-        {
-            self.walk_state_time -= self.current_walk_state_duration(double_support_duration, single_support_duration);
+        let duration = self.current_walk_state_duration(double_support_duration, single_support_duration);
+        let landed = match self.walk_support_state {
+            WalkSupportState::SingleSupportLeft => self.foot_contact(false),
+            WalkSupportState::SingleSupportRight => self.foot_contact(true),
+            _ => true,
+        };
+        // Transfer support only after the swing foot actually touches down.
+        if self.walk_state_time >= duration && landed {
             self.advance_walk_support_state(direction, step_length, support_shift, spread);
         }
         self.update_walk_phase_from_state(double_support_duration, single_support_duration);
@@ -2015,6 +2215,20 @@ impl Simulation {
         let state_progress = (self.walk_state_time
             / self.current_walk_state_duration(double_support_duration, single_support_duration).max(self.dt()))
             .clamp(0.0, 1.0);
+        if state_progress < 0.7 {
+            let blend = (dt * 8.0).min(1.0);
+            match self.walk_support_state {
+                WalkSupportState::SingleSupportLeft => {
+                    let target = self.plan_walk_touchdown_x(self.walk_left_anchor[0], direction, step_length, support_shift, spread);
+                    self.walk_right_touchdown_x = lerp(self.walk_right_touchdown_x, target, blend);
+                }
+                WalkSupportState::SingleSupportRight => {
+                    let target = self.plan_walk_touchdown_x(self.walk_right_anchor[0], direction, step_length, support_shift, spread);
+                    self.walk_left_touchdown_x = lerp(self.walk_left_touchdown_x, target, blend);
+                }
+                _ => {}
+            }
+        }
         let (mut left_leg, mut right_leg) = self.walk_targets_from_state(
             direction,
             state_progress,
@@ -2036,46 +2250,46 @@ impl Simulation {
             0.006 * (1.0 - (2.0 * state_progress - 1.0).abs())
         };
         let desired_pelvis_height = walk_cfg.pelvis_height_target_m + pelvis_bob - stance_compression;
-        let vertical_feedback = ((desired_pelvis_height - base.y) * 0.40 - 0.08 * base.vy).clamp(-0.035, 0.035);
+        let vertical_feedback = ((desired_pelvis_height - pelvis[1]) * 0.40 - 0.08 * base.vy).clamp(-0.035, 0.035);
 
         right_leg.target[1] -= vertical_feedback;
         left_leg.target[1] -= vertical_feedback;
 
         if matches!(right_leg.phase, WalkLegPhase::TerminalSwing) {
-            right_leg.target[1] = right_leg.target[1].max(GROUND_Y + 0.006);
+            right_leg.target[1] = right_leg.target[1].max(GROUND_Y);
         }
         if matches!(left_leg.phase, WalkLegPhase::TerminalSwing) {
-            left_leg.target[1] = left_leg.target[1].max(GROUND_Y + 0.006);
+            left_leg.target[1] = left_leg.target[1].max(GROUND_Y);
         }
 
-        let stance_balance = match self.walk_support_state {
-            WalkSupportState::SingleSupportLeft => -1.0,
-            WalkSupportState::SingleSupportRight => 1.0,
-            WalkSupportState::DoubleSupportLeft => -0.35,
-            WalkSupportState::DoubleSupportRight => 0.35,
-        };
-        let stance_hip_bias = stance_balance * direction * (0.025 + 0.025 * speed_ratio);
+        // If the nominal swing has ended above the floor, lower the foot
+        // gently until contact; do not freeze forever or invent a touchdown.
+        let landing_search = ((self.walk_state_time - duration).max(0.0) * 0.08).min(0.06);
+        if !right_leg.in_stance { right_leg.target[1] -= landing_search; }
+        if !left_leg.in_stance { left_leg.target[1] -= landing_search; }
 
-        enforce_min_foot_separation(&mut left_leg.target, &mut right_leg.target, walk_cfg.foot_separation_min_m);
+        // In the sagittal projection the feet must pass each other during swing.
+        // Both knees bend in the same anatomical direction.
+        let bend = if direction >= 0.0 { LegSide::Left } else { LegSide::Right };
 
-        let Some(right_ik) = kinematics.solve_leg_ik(LegSide::Right, pelvis, base.angle, right_leg.target) else {
+        let Some(right_ik) = kinematics.solve_leg_ik(bend, pelvis, base.angle, right_leg.target) else {
             return;
         };
-        let Some(left_ik) = kinematics.solve_leg_ik(LegSide::Left, pelvis, base.angle, left_leg.target) else {
+        let Some(left_ik) = kinematics.solve_leg_ik(bend, pelvis, base.angle, left_leg.target) else {
             return;
         };
         let hip_upright_correction =
-            (-walk_cfg.hip_upright_gain * torso_angle_error - walk_cfg.hip_upright_damping * base.omega).clamp(-0.18, 0.18);
+            (walk_cfg.hip_upright_gain * torso_angle_error + walk_cfg.hip_upright_damping * base.omega).clamp(-0.5, 0.5);
 
         self.apply_targets(ServoTargets {
             right_hip: Some(clamp_joint_target(
                 JointName::RightHip,
-                right_ik.hip + hip_upright_correction - stance_hip_bias,
+                right_ik.hip + if right_leg.in_stance { hip_upright_correction } else { 0.0 },
             )),
             right_knee: Some(right_ik.knee),
             left_hip: Some(clamp_joint_target(
                 JointName::LeftHip,
-                left_ik.hip + hip_upright_correction + stance_hip_bias,
+                left_ik.hip + if left_leg.in_stance { hip_upright_correction } else { 0.0 },
             )),
             left_knee: Some(left_ik.knee),
         });
@@ -2355,30 +2569,19 @@ impl Simulation {
         swing_retraction_m: f32,
     ) -> WalkLegTarget {
         let state_progress = state_progress.clamp(0.0, 1.0);
-        let overshoot_x = touchdown_x + direction * swing_retraction_m;
-        let (phase, x, y) = if state_progress < 0.32 {
-            let u = smoothstep01(state_progress / 0.32);
-            (
-                WalkLegPhase::InitialSwing,
-                lerp(swing_start[0], 0.5 * (swing_start[0] + overshoot_x), u),
-                lerp(swing_start[1], GROUND_Y + 0.80 * step_height, u),
-            )
+        let _ = (direction, swing_retraction_m);
+        let phase = if state_progress < 0.32 {
+            WalkLegPhase::InitialSwing
         } else if state_progress < 0.72 {
-            let u = smoothstep01((state_progress - 0.32) / 0.40);
-            let midswing_x = 0.5 * (swing_start[0] + overshoot_x);
-            (
-                WalkLegPhase::MidSwing,
-                lerp(midswing_x, overshoot_x, u),
-                GROUND_Y + step_height * (0.85 + 0.15 * (1.0 - (2.0 * u - 1.0).abs())),
-            )
+            WalkLegPhase::MidSwing
         } else {
-            let u = smoothstep01((state_progress - 0.72) / 0.28);
-            (
-                WalkLegPhase::TerminalSwing,
-                lerp(overshoot_x, touchdown_x, u),
-                lerp(GROUND_Y + 0.55 * step_height, GROUND_Y, u),
-            )
+            WalkLegPhase::TerminalSwing
         };
+        // Continuous position and zero endpoint velocity at liftoff/touchdown.
+        let blend = state_progress.powi(3) * (10.0 - 15.0 * state_progress + 6.0 * state_progress.powi(2));
+        let x = lerp(swing_start[0], touchdown_x, blend);
+        let y = lerp(swing_start[1], GROUND_Y, blend)
+            + step_height * (std::f32::consts::PI * state_progress).sin().powi(2);
 
         WalkLegTarget {
             target: [x, y],

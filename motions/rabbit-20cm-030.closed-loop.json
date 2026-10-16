@@ -1,0 +1,286 @@
+{
+  "steps": [
+    {
+      "step": 0,
+      "length_m": 0.20000001512365526,
+      "duration_s": 0.6775161878935194,
+      "peak_requested_torque_nm": 0.16166087958546863,
+      "return_error": 0.008907583257046684
+    },
+    {
+      "step": 1,
+      "length_m": 0.2000000898869696,
+      "duration_s": 0.6730816165061743,
+      "peak_requested_torque_nm": 0.16206791432515197,
+      "return_error": 0.007028511062663269
+    },
+    {
+      "step": 2,
+      "length_m": 0.20000009606496247,
+      "duration_s": 0.671868365491842,
+      "peak_requested_torque_nm": 0.16254097300375817,
+      "return_error": 0.005735565048971166
+    },
+    {
+      "step": 3,
+      "length_m": 0.20000004920529107,
+      "duration_s": 0.670904666553011,
+      "peak_requested_torque_nm": 0.16290567367502992,
+      "return_error": 0.004682611371725079
+    },
+    {
+      "step": 4,
+      "length_m": 0.2000000621559844,
+      "duration_s": 0.6701198733606964,
+      "peak_requested_torque_nm": 0.1630875898876104,
+      "return_error": 0.003820297004247534
+    },
+    {
+      "step": 5,
+      "length_m": 0.20000002209942697,
+      "duration_s": 0.6694816081398821,
+      "peak_requested_torque_nm": 0.16335286869353202,
+      "return_error": 0.003122823377958356
+    },
+    {
+      "step": 6,
+      "length_m": 0.20000009429459595,
+      "duration_s": 0.6689625728734696,
+      "peak_requested_torque_nm": 0.1635605184438118,
+      "return_error": 0.0025458906662654407
+    },
+    {
+      "step": 7,
+      "length_m": 0.20000018389479782,
+      "duration_s": 0.6685392943697723,
+      "peak_requested_torque_nm": 0.16368326465627442,
+      "return_error": 0.0020820271826683945
+    },
+    {
+      "step": 8,
+      "length_m": 0.20000002817341736,
+      "duration_s": 0.6681975196909871,
+      "peak_requested_torque_nm": 0.16376372384512064,
+      "return_error": 0.0017023864747003807
+    },
+    {
+      "step": 9,
+      "length_m": 0.20000007179991752,
+      "duration_s": 0.6679147328890567,
+      "peak_requested_torque_nm": 0.16391218065425733,
+      "return_error": 0.0013888108845096843
+    },
+    {
+      "step": 10,
+      "length_m": 0.20000002023104,
+      "duration_s": 0.6676860676951402,
+      "peak_requested_torque_nm": 0.163978096948662,
+      "return_error": 0.0011376814028091486
+    },
+    {
+      "step": 11,
+      "length_m": 0.19999999455518663,
+      "duration_s": 0.6674983714417383,
+      "peak_requested_torque_nm": 0.16406463822898193,
+      "return_error": 0.0009273388463012988
+    },
+    {
+      "step": 12,
+      "length_m": 0.20000003614138476,
+      "duration_s": 0.667344761644276,
+      "peak_requested_torque_nm": 0.16407373543177523,
+      "return_error": 0.000756827084624766
+    },
+    {
+      "step": 13,
+      "length_m": 0.20000005331073117,
+      "duration_s": 0.6672202252769618,
+      "peak_requested_torque_nm": 0.16416275476492628,
+      "return_error": 0.0006163398790406057
+    },
+    {
+      "step": 14,
+      "length_m": 0.20000007331310116,
+      "duration_s": 0.6671193631785515,
+      "peak_requested_torque_nm": 0.1642154192747575,
+      "return_error": 0.0005033417433399284
+    },
+    {
+      "step": 15,
+      "length_m": 0.200000001901101,
+      "duration_s": 0.6670359455675673,
+      "peak_requested_torque_nm": 0.16429457863709176,
+      "return_error": 0.00041397482363585814
+    },
+    {
+      "step": 16,
+      "length_m": 0.20000006352013688,
+      "duration_s": 0.6669676451957118,
+      "peak_requested_torque_nm": 0.16415258582100578,
+      "return_error": 0.000334004695545774
+    },
+    {
+      "step": 17,
+      "length_m": 0.2000000799727177,
+      "duration_s": 0.6669127199304122,
+      "peak_requested_torque_nm": 0.1643453275754425,
+      "return_error": 0.0002739665614671228
+    },
+    {
+      "step": 18,
+      "length_m": 0.20000005101221763,
+      "duration_s": 0.6668668203809077,
+      "peak_requested_torque_nm": 0.16431550901561645,
+      "return_error": 0.00022360524679872643
+    },
+    {
+      "step": 19,
+      "length_m": 0.1999999853707061,
+      "duration_s": 0.6668298062308747,
+      "peak_requested_torque_nm": 0.1643654408520386,
+      "return_error": 0.00018108813071092628
+    },
+    {
+      "step": 20,
+      "length_m": 0.20000006548766316,
+      "duration_s": 0.6667990674699225,
+      "peak_requested_torque_nm": 0.1642728920991683,
+      "return_error": 0.0001478102076113295
+    },
+    {
+      "step": 21,
+      "length_m": 0.20000002196051855,
+      "duration_s": 0.6667750207121269,
+      "peak_requested_torque_nm": 0.1643878526216117,
+      "return_error": 0.00011954078657649289
+    },
+    {
+      "step": 22,
+      "length_m": 0.20000004179961897,
+      "duration_s": 0.6667543387603619,
+      "peak_requested_torque_nm": 0.16429709423360686,
+      "return_error": 9.999216800677719e-05
+    },
+    {
+      "step": 23,
+      "length_m": 0.20000003601990368,
+      "duration_s": 0.6667386497258787,
+      "peak_requested_torque_nm": 0.164340046726465,
+      "return_error": 8.065892440731598e-05
+    },
+    {
+      "step": 24,
+      "length_m": 0.2000001010192976,
+      "duration_s": 0.6667247662739867,
+      "peak_requested_torque_nm": 0.16429011070356236,
+      "return_error": 6.444288082739504e-05
+    },
+    {
+      "step": 25,
+      "length_m": 0.20000009839767327,
+      "duration_s": 0.6667149368188858,
+      "peak_requested_torque_nm": 0.16439019381655537,
+      "return_error": 5.255500045446112e-05
+    },
+    {
+      "step": 26,
+      "length_m": 0.20000008439651487,
+      "duration_s": 0.6667058051934692,
+      "peak_requested_torque_nm": 0.16438308634815402,
+      "return_error": 4.206130507054355e-05
+    },
+    {
+      "step": 27,
+      "length_m": 0.20000008080976042,
+      "duration_s": 0.6666993225635989,
+      "peak_requested_torque_nm": 0.16441664597063974,
+      "return_error": 3.522916437774301e-05
+    },
+    {
+      "step": 28,
+      "length_m": 0.20000001872306267,
+      "duration_s": 0.6666931313460038,
+      "peak_requested_torque_nm": 0.16442275014762361,
+      "return_error": 3.282398441692463e-05
+    },
+    {
+      "step": 29,
+      "length_m": 0.20000014015020756,
+      "duration_s": 0.6666872824110917,
+      "peak_requested_torque_nm": 0.1642315000761542,
+      "return_error": 2.5297342085763777e-05
+    },
+    {
+      "step": 30,
+      "length_m": 0.2000000491678889,
+      "duration_s": 0.6666857069550424,
+      "peak_requested_torque_nm": 0.16435505253770544,
+      "return_error": 2.3955426389156493e-05
+    },
+    {
+      "step": 31,
+      "length_m": 0.20000010926691353,
+      "duration_s": 0.666681471034558,
+      "peak_requested_torque_nm": 0.16435355090410111,
+      "return_error": 1.719644461675687e-05
+    },
+    {
+      "step": 32,
+      "length_m": 0.19999995370502174,
+      "duration_s": 0.6666800714139156,
+      "peak_requested_torque_nm": 0.16437347820694467,
+      "return_error": 1.8296749698648714e-05
+    },
+    {
+      "step": 33,
+      "length_m": 0.20000010509866412,
+      "duration_s": 0.6666756417990484,
+      "peak_requested_torque_nm": 0.1643689976122823,
+      "return_error": 1.7909455787890886e-05
+    },
+    {
+      "step": 34,
+      "length_m": 0.2000001382565337,
+      "duration_s": 0.6666756283525901,
+      "peak_requested_torque_nm": 0.1644354893549182,
+      "return_error": 1.7229681714173312e-05
+    },
+    {
+      "step": 35,
+      "length_m": 0.20000006021965264,
+      "duration_s": 0.6666750519435446,
+      "peak_requested_torque_nm": 0.16440759794024698,
+      "return_error": 8.897309405542292e-06
+    },
+    {
+      "step": 36,
+      "length_m": 0.20000001838731288,
+      "duration_s": 0.6666731644546032,
+      "peak_requested_torque_nm": 0.1643625967420043,
+      "return_error": 1.2406271086052317e-05
+    },
+    {
+      "step": 37,
+      "length_m": 0.20000003482117037,
+      "duration_s": 0.6666725707755314,
+      "peak_requested_torque_nm": 0.1643996713466654,
+      "return_error": 1.0512331198616557e-05
+    },
+    {
+      "step": 38,
+      "length_m": 0.20000009078334968,
+      "duration_s": 0.666671430754503,
+      "peak_requested_torque_nm": 0.16424269941036615,
+      "return_error": 6.208107031741471e-06
+    },
+    {
+      "step": 39,
+      "length_m": 0.20000003942272704,
+      "duration_s": 0.6666706702454542,
+      "peak_requested_torque_nm": 0.1644174018525034,
+      "return_error": 4.369906876401376e-06
+    }
+  ],
+  "perturbation_rad": 0.005,
+  "model": "point-foot; not Rapier contact validation"
+}

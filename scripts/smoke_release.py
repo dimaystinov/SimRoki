@@ -11,15 +11,16 @@ def main():
     with tempfile.TemporaryDirectory(prefix="simroki-release-", ignore_cleanup_errors=True) as directory:
         with zipfile.ZipFile(sys.argv[1]) as archive:
             archive.extractall(directory)
-        root = Path(directory) / "SimRoki-windows-x64"
-        for name in ("native_app.exe", "sim_core.dll", "Start-SimRoki.cmd",
-                     "robot_config.toml", "motion_sequence.json"):
+        mac = sys.platform == "darwin"
+        root = Path(directory) / ("SimRoki-macos-arm64" if mac else "SimRoki-windows-x64")
+        config_root = root / "SimRoki.app/Contents/Resources" if mac else root
+        for name in (("SimRoki.app/Contents/MacOS/native_app", "SimRoki.app/Contents/MacOS/SimRoki", "SimRoki.app/Contents/Info.plist") if mac else ("native_app.exe", "sim_core.dll", "Start-SimRoki.cmd", "robot_config.toml", "motion_sequence.json")):
             assert (root / name).stat().st_size > 0, name
         sys.path.insert(0, str(root / "python-sdk"))
         from robot_sim import SimulatorFFIClient
 
         # Use the packaged SDK's automatic DLL discovery, from outside its directory.
-        with SimulatorFFIClient(config_path=str(root / "robot_config.toml")) as sim:
+        with SimulatorFFIClient(config_path=str(config_root / "robot_config.toml")) as sim:
             before = sim.get_state()
             assert before["scene"] == "robot", before["scene"]
             sim.resume()

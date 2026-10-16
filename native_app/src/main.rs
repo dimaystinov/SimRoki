@@ -1,4 +1,4 @@
-﻿use axum::{
+use axum::{
     extract::State,
     http::StatusCode,
     response::IntoResponse,
@@ -230,6 +230,7 @@ async fn run_server(sim: SharedSimulation, external_control: SharedExternalContr
         .route("/rl/observation", get(rl_observation))
         .route("/rl/step", post(rl_step))
         .route("/walk/direction", post(set_walk_direction))
+        .route("/walk/rabbit", post(set_rabbit_walk))
         .route("/walk/config", post(set_walk_config))
         .with_state(AppState { sim, external_control });
 
@@ -361,6 +362,35 @@ async fn rl_step(
     mark_external_control(&state.external_control);
     let mut sim = state.sim.lock().map_err(|_| AppError::lock())?;
     Ok(Json(sim.rl_step_deg(command)))
+}
+
+#[derive(Deserialize)]
+struct RabbitWalkRequest {
+    enabled: bool,
+    #[serde(default)]
+    reset_to_orbit: bool,
+    #[serde(default)]
+    nominal_speed_mps: Option<f32>,
+}
+
+async fn set_rabbit_walk(State(state): State<AppState>, Json(command): Json<RabbitWalkRequest>) -> Result<Json<OkResponse>, AppError> {
+    mark_external_control(&state.external_control);
+    let mut sim=state.sim.lock().map_err(|_|AppError::lock())?;
+    if let Some(speed)=command.nominal_speed_mps {
+        if !speed.is_finite() || !(0.3..=0.6).contains(&speed) {
+            return Err(AppError{status:StatusCode::BAD_REQUEST,message:"nominal_speed_mps must be 0.3..0.6".into()});
+        }
+    }
+    if command.enabled {
+        let trajectory=include_str!("../../motions/rabbit-20cm-030.json");
+        let result=if command.reset_to_orbit {sim.reset_to_rabbit_orbit(trajectory)}else if sim.state().walk_controller=="rabbit_virtual_constraints" {Ok(())}else{sim.load_rabbit_trajectory(trajectory)};
+        result.map_err(|message|AppError{status:StatusCode::BAD_REQUEST,message})?;
+        sim.set_directional_walk_enabled(true);
+        if let Some(speed)=command.nominal_speed_mps {
+            sim.set_rabbit_nominal_speed(speed).map_err(|message|AppError{status:StatusCode::BAD_REQUEST,message})?;
+        }
+    } else {sim.disable_rabbit_controller();}
+    Ok(Json(OkResponse{ok:true}))
 }
 
 async fn set_walk_direction(
@@ -739,6 +769,14 @@ fn draw_control_panel(
                 sim.set_directional_walk_enabled(true);
             }
         }
+        if ui.button(None, "RABBIT planned walk") {
+            if let Ok(mut sim)=sim.lock() {
+                sim.set_target_direction(1.0);
+                if let Err(message)=sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json")) {
+                    warn!("RABBIT trajectory rejected: {message}");
+                }
+            }
+        }
         if ui.button(None, "Stop walk") {
             if let Ok(mut sim) = sim.lock() {
                 sim.set_directional_walk_enabled(false);
@@ -757,6 +795,7 @@ fn draw_control_panel(
                 state.walk_target_speed
             ),
         );
+        ui.label(None, &format!("Controller: {} | planned steps: {}",state.walk_controller,state.planned_steps));
         ui.label(None, "Motion editor");
         let frame_changed = slider_row(ui, "frame_ms", &mut controls.motion_frame_ms, 10.0..1000.0);
         if frame_changed {
@@ -1151,7 +1190,7 @@ fn draw_overlay(
     controls: &ControlPanelState,
     fonts: &AppFonts,
 ) {
-    draw_rectangle(24.0, 24.0, 430.0, 300.0, Color::new(1.0, 1.0, 1.0, 0.9));
+    draw_rectangle(24.0, 24.0, 530.0, 370.0, Color::new(1.0, 1.0, 1.0, 0.9));
     let title = match state.scene {
         SceneKind::Robot => "Robot mode",
         SceneKind::Ball => "Ball smoke-test",
@@ -1173,7 +1212,19 @@ fn draw_overlay(
         color_u8!(57, 62, 70, 255),
     );
 
-    let mut y = 182.0;
+    if let Some(base) = &state.base {
+        let warning = base.angle.abs() > 20.0_f32.to_radians();
+        draw_text(
+            &format!("Torso tilt: {:+.1} deg | rate: {:+.1} deg/s", base.angle.to_degrees(), base.omega.to_degrees()),
+            40.0, 176.0, 22.0,
+            if warning { color_u8!(190, 55, 40, 255) } else { color_u8!(40, 110, 75, 255) },
+        );
+        draw_text(
+            &format!("Actual speed: {:+.2} m/s | {}", base.vx, state.walk_support_state),
+            40.0, 202.0, 20.0, color_u8!(57, 62, 70, 255),
+        );
+    }
+    let mut y = 230.0;
     for name in ["right_hip", "right_knee", "left_hip", "left_knee"] {
         if let Some(joint) = state.joints.get(name) {
             draw_text(

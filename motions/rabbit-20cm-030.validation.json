@@ -1,0 +1,13 @@
+{
+  "integration_success": true,
+  "max_dense_dynamics_residual_nm": 0.00015717580168306267,
+  "min_normal_force_n": 6.004877241019747,
+  "min_friction_margin_n": 5.989829715189705,
+  "min_swing_height_m": -3.141931159689193e-14,
+  "independent_position_error_rad": 0.0001558134961277373,
+  "independent_velocity_error_rad_s": 0.0026632785747036647,
+  "impact_periodicity_error": 4.636563355475687e-11,
+  "peak_torque_nm": 0.1643890290219061,
+  "step_length_m": 0.2,
+  "speed_mps": 0.3
+}

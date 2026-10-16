@@ -42,6 +42,38 @@ The servo angle is the relative angle between neighboring links:
 - hip: `thigh` relative to `torso`
 - knee: `shin` relative to `thigh`
 
+## RABBIT model and walking research
+
+The reference morphology is the **planar five-link, four-actuator RABBIT biped**.
+The detailed [RABBIT model and implementation notes](docs/rabbit-model.md) explain
+kinematics, dynamics, impact/relabeling, trajectory optimization, forward torso
+pitch, 20 cm steps, speed/cadence coupling, and differences from Rapier contacts.
+
+Primary references and source code:
+
+- [RABBIT: A Testbed for Advanced Control Theory (2003)](https://doi.org/10.1109/MCS.2003.1234651)
+  — mechanism, experimental parameters and control architecture.
+- [Hybrid Zero Dynamics of Planar Biped Walkers (2003)](https://doi.org/10.1109/TAC.2002.806653)
+  — hybrid model, virtual constraints and stability theory.
+- [Feedback Control of Dynamic Bipedal Robot Locomotion: book, MATLAB models and errata](https://grizzle.robotics.umich.edu/publications/biped-book).
+- [Virtual Constraints and Hybrid Zero Dynamics](https://arxiv.org/html/1706.01127).
+- [OptimTraj five-link biped source](https://github.com/MatthewPeterKelly/OptimTraj/tree/master/demo/fiveLinkBiped)
+  and [Kelly's direct-collocation tutorial](https://doi.org/10.1137/16M1062569).
+
+`planner/model.py` derives a separate point-foot model using **SimRoki's own**
+masses and geometry. `planner/optimize.py` computes periodic motor trajectories
+with dynamics, contact, impact and actuator constraints. The native **RABBIT planned walk**
+button runs state-phased virtual constraints with startup, contact-driven leg
+switching, bounded torques and a double-support stop. The existing **Walk right**
+IK controller remains available. See [controls, API and measured results](docs/walking-controller.md)
+and [reproducible planner checks](planner/README.md).
+
+The ideal orbit is 20 cm; measured native steps are approximately 17–18 cm in
+RABBIT mode and 22–23 cm in the IK reference. Requested/nominal speed is not yet
+an accurate measured-speed command. The point-foot return map has a numerical
+spectral radius of about 0.818; this is not a formal stability proof for Rapier.
+See [implementation status and remaining limits](docs/implementation-plan.md).
+
 ## Config file
 
 The simulator now reads its startup parameters from:

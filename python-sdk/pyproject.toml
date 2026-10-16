@@ -25,4 +25,4 @@ where = ["."]
 include = ["robot_sim*"]
 
 [tool.setuptools.package-data]
-robot_sim = ["_native/*.dll"]
+robot_sim = ["_native/*.dll", "_native/*.dylib", "_native/*.so"]

@@ -6,7 +6,10 @@ if (Test-Path $package) { throw "Package directory already exists: $package" }
 New-Item -ItemType Directory -Path $package -Force | Out-Null
 Copy-Item "$binaryDir/native_app.exe", "$binaryDir/sim_core.dll" $package
 Copy-Item robot_config.toml, motion_sequence.json, README.md $package
-Copy-Item python-sdk "$package/python-sdk" -Recurse
+Copy-Item docs, motions, planner $package -Recurse
+New-Item -ItemType Directory -Path "$package/python-sdk" -Force | Out-Null
+Copy-Item python-sdk/robot_sim, python-sdk/examples "$package/python-sdk" -Recurse
+Copy-Item python-sdk/README.md, python-sdk/PROTOCOL.md, python-sdk/pyproject.toml "$package/python-sdk"
 New-Item -ItemType Directory -Path "$package/python-sdk/robot_sim/_native" -Force | Out-Null
 Copy-Item "$binaryDir/sim_core.dll" "$package/python-sdk/robot_sim/_native/sim_core.dll" -Force
 @'

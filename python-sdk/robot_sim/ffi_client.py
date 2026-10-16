@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -137,23 +138,24 @@ class SimulatorFFIClient:
         if env_path:
             candidates.append(Path(env_path))
 
-        package_native = Path(__file__).resolve().parent / "_native" / "sim_core.dll"
+        library_name = "sim_core.dll" if sys.platform == "win32" else "libsim_core.dylib" if sys.platform == "darwin" else "libsim_core.so"
+        package_native = Path(__file__).resolve().parent / "_native" / library_name
         candidates.append(package_native)
 
         cwd = Path.cwd()
         candidates.extend(
             [
-                cwd / "sim_core.dll",
-                cwd / "target" / "release" / "sim_core.dll",
-                cwd / "target" / "debug" / "sim_core.dll",
+                cwd / library_name,
+                cwd / "target" / "release" / library_name,
+                cwd / "target" / "debug" / library_name,
             ]
         )
 
         root = Path(__file__).resolve().parents[2]
         candidates.extend(
             [
-                root / "target" / "release" / "sim_core.dll",
-                root / "target" / "debug" / "sim_core.dll",
+                root / "target" / "release" / library_name,
+                root / "target" / "debug" / library_name,
             ]
         )
 
