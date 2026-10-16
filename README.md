@@ -1,5 +1,16 @@
 # Five Link Robot Simulator
 
+## Windows download
+
+Download `SimRoki-windows-x64.zip` from [Releases](https://github.com/dimaystinov/SimRoki/releases/latest),
+extract the entire archive, and run `Start-SimRoki.cmd`. The portable desktop app does not need Rust or Python.
+The archive also includes `sim_core.dll`, configuration, motions, and the optional Python SDK.
+
+Windows releases are built and smoke-tested by `.github/workflows/windows-release.yml` when a `v*` tag is pushed.
+Manual workflow runs build and verify an artifact without publishing a release.
+The build uses `Cargo.lock`, MSVC x64, and a statically linked C runtime.
+Each release includes a SHA-256 checksum. Interactive graphics are not manually tested by the workflow.
+
 Desktop-native 2D simulator of a five-link biped robot built on `rapier2d`, with native Rust rendering and a local control server embedded in the desktop app.
 
 ## Current status
