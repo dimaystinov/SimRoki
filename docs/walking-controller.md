@@ -120,10 +120,10 @@ Four 120 s native trials starting after 0/1/5/10 s standing measured steady spee
 height above 1.28 m. Actual steps are about 27 cm, longer than the original
 20 cm request. These are measured flat-ground trials, not a guarantee for
 arbitrary initial conditions. The fast command ramps over successive contacts. Stopping from full speed
-takes approximately 15–17 seconds in the tested starts; it follows the startup
+takes approximately 12–15 seconds in the tested starts; it follows the startup
 orbit in reverse while retaining strong tracking, then holds at double support.
 
-Use **RABBIT fast ~1 m/s** or:
+Use **Start automatic walk ~1 m/s** or:
 
 ```sh
 curl -X POST http://127.0.0.1:8080/walk/rabbit \
@@ -133,3 +133,21 @@ curl -X POST http://127.0.0.1:8080/walk/rabbit \
 
 The left information overlay has no solid background. Arrow buttons at the
 upper left and right independently collapse and expand the two panels.
+
+### Repeated start and stop
+
+The controller retains its state at rest instead of being discarded by the swing
+timeout. On resume it prepares the front support and leans forward with the joint
+servos, then enters the dynamic orbit when measured forward velocity exceeds
+0.2 m/s. No pose reset, position jump, or external propulsive force is used.
+
+`automatic_walk_restarts_ten_times_without_falling` verifies ten continuous cycles:
+60 seconds walking near 1 m/s, full braking, and five seconds at rest. It checks
+body height above 1.25 m, torso tilt below 0.35 rad, torque limits, position
+continuity, full stopping, and measured cruise speed between 0.90 and 1.10 m/s.
+The local ARM run covered 435 m; cruise speed was 0.93–0.98 m/s, peak tilt 16.4°,
+and minimum torso height 1.278 m. This is a level-ground regression scenario,
+not a guarantee for arbitrary disturbances or changed model parameters.
+
+The first automatic start settles the standing pose for one second before leaning.
+A separate regression covers start delays of 0, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, and 30 seconds. The GUI button and 1 m/s API request use the same entry point.

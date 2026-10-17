@@ -68,7 +68,9 @@ switching, bounded torques and a double-support stop. The existing **Walk right*
 IK controller remains available. See [controls, API and measured results](docs/walking-controller.md)
 and [reproducible planner checks](planner/README.md).
 
-The **RABBIT fast ~1 m/s** button selects a higher-step profile: native trials
+At the top of the right panel, **Start automatic walk ~1 m/s** starts continuous walking. The same button becomes **Stop automatic walk** for gradual braking (about 12–15 seconds from full speed). A status line shows walking, braking, or stopped.
+
+The **Start automatic walk ~1 m/s** button selects a higher-step profile: native trials
 measure approximately 0.97–1.00 m/s, 27 cm steps, 5.5 cm foot lift and 14° forward
 trunk lean. The slow RABBIT orbit retains 20 cm nominal steps (17–18 cm measured),
 and the IK reference measures 22–23 cm. The arrow buttons at the upper left and
@@ -320,3 +322,13 @@ Verified during development with:
 
 - `cargo check`
 - `python -m py_compile python-sdk\robot_sim\client.py python-sdk\robot_sim\models.py python-sdk\robot_sim\cli.py`
+
+### Music
+
+The right panel has a separate **Music: play / resume** / **Music: pause** button for
+GHOSTFACE PLAYA — Why Not. Pause preserves the current playback position; resume
+continues from it. The track loops automatically and is embedded in both desktop
+release executables. Music starts paused and is independent of walking controls.
+
+Automatic walking is regression-tested for ten consecutive 60-second walks, each
+followed by a complete stop and five seconds at rest, without resetting the robot.

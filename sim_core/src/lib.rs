@@ -386,6 +386,7 @@ struct RabbitRuntime {
     goal: Option<rabbit::RabbitTrajectory>,
     stance_left: bool,
     starting: bool,
+    preparing: bool,
     stopping: bool,
     elapsed: f32,
     steps: u64,
@@ -1254,7 +1255,14 @@ impl Simulation {
     }
 
     pub fn set_directional_walk_enabled(&mut self, enabled: bool) {
-        if enabled {if let Some(runtime)=self.rabbit_runtime.as_mut() {runtime.stopping=false;}}
+        if enabled {if let Some(runtime)=self.rabbit_runtime.as_mut() {
+            if !self.directional_walk_enabled {
+                runtime.elapsed=0.0;runtime.preparing=true;runtime.starting=true;runtime.steps=0;
+                runtime.trajectory=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json")).expect("validated startup gait");
+                self.walk_speed=0.0;
+            }
+            runtime.stopping=false;
+        }}
         if !enabled {
             if let Some(runtime)=self.rabbit_runtime.as_mut() {
                 if runtime.stopping { return; }
@@ -1531,7 +1539,7 @@ impl Simulation {
             .map(|(l,r)|l[0]>r[0]).unwrap_or(true);
         self.gait=None;self.motion_sequence=None;self.rl_residual_enabled=false;
         self.set_directional_walk_enabled(true);
-        self.rabbit_runtime=Some(RabbitRuntime{model,trajectory:startup,goal:Some(trajectory),stance_left,starting:true,stopping:false,elapsed:0.0,steps:0});
+        self.rabbit_runtime=Some(RabbitRuntime{model,trajectory:startup,goal:Some(trajectory),stance_left,starting:true,preparing:false,stopping:false,elapsed:0.0,steps:0});
         Ok(())
     }
 
@@ -1590,6 +1598,26 @@ impl Simulation {
         self.walk_target_speed=speed;Ok(())
     }
 
+    /// Start or resume the fast profile from the current physical pose.
+    pub fn start_automatic_walk(&mut self) -> Result<(), String> {
+        if self.state().base.is_some_and(|b| b.y<1.0 || b.angle.abs()>0.7) {
+            return Err("Robot has fallen: press R to reset before starting".into());
+        }
+        self.set_target_direction(1.0);
+        if self.rabbit_runtime.is_none() {
+            self.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json"))?;
+            let runtime=self.rabbit_runtime.as_mut().unwrap();
+            runtime.preparing=true;
+            // Settle the initial stance before leaning; a click may arrive at
+            // any phase of the small standing oscillation.
+            runtime.elapsed=-1.0;
+        }
+        self.set_rabbit_nominal_speed(1.0)?;
+        self.set_directional_walk_enabled(true);
+        self.resume();
+        Ok(())
+    }
+
     pub fn disable_rabbit_controller(&mut self) {
         self.set_directional_walk_enabled(false);
     }
@@ -1597,16 +1625,40 @@ impl Simulation {
     fn apply_rabbit_forces(&mut self)->bool {
         let Some(mut runtime)=self.rabbit_runtime.take() else {return false;};
         let stop_speed=self.robot.as_ref().map(|r|self.bodies[r.torso].linvel().x.abs()).unwrap_or(0.0);
-        if runtime.stopping && runtime.trajectory.speed_mps<0.55 && stop_speed<0.25 && self.foot_contact(true) && self.foot_contact(false) {
+        if runtime.stopping && (runtime.trajectory.speed_mps<0.55 || (runtime.elapsed>1.0 && stop_speed<0.02)) && stop_speed<0.25 && self.foot_contact(true) && self.foot_contact(false) {
             if let Some(robot)=self.robot.as_mut() {
                 for servo in robot.servos.values_mut() {
                     let angle=self.bodies[servo.child].rotation().angle()-self.bodies[servo.parent].rotation().angle();
                     servo.target=angle;servo.commanded_target=angle;servo.integral_error=0.0;
                 }
             }
-            self.directional_walk_enabled=false;self.walk_speed=0.0;return false;
+            self.directional_walk_enabled=false;self.walk_speed=0.0;
+            runtime.stopping=false;
+            self.rabbit_runtime=Some(runtime);
+            return false;
         }
-        if !self.directional_walk_enabled {return false;}
+        if !self.directional_walk_enabled {self.rabbit_runtime=Some(runtime);return false;}
+        // Restart from the measured resting pose using joint torques only. Lean
+        // over the front support until forward velocity can sustain the orbit.
+        if runtime.preparing {
+            runtime.elapsed+=self.dt();
+            let front_left=self.foot_world(LegSide::Left).unwrap()[0]>self.foot_world(LegSide::Right).unwrap()[0];
+            let targets=self.canonical_initial_targets;
+            let lean=0.50*runtime.elapsed.clamp(0.0,1.0);
+            let robot=self.robot.as_mut().unwrap();
+            for (name, value) in [
+                (JointName::LeftHip,lean+if front_left {targets.left_hip}else{targets.right_hip}),
+                (JointName::RightHip,lean+if front_left {targets.right_hip}else{targets.left_hip}),
+                (JointName::LeftKnee,targets.left_knee),
+                (JointName::RightKnee,targets.right_knee),
+            ] {robot.servos.get_mut(&name).unwrap().commanded_target=value;}
+            if runtime.elapsed>=0.4 && self.bodies[self.robot.as_ref().unwrap().torso].linvel().x>0.2 {
+                runtime.preparing=false;runtime.starting=false;runtime.elapsed=0.0;
+                runtime.stance_left=front_left;
+                self.refresh_walk_anchors_from_pose();
+            }
+            self.rabbit_runtime=Some(runtime);return false;
+        }
         if runtime.starting {
             runtime.elapsed+=self.dt();
             if runtime.elapsed>0.6 && self.foot_contact(true) && self.foot_contact(false) {
@@ -1785,7 +1837,7 @@ impl Simulation {
             walk_target_speed: self.walk_target_speed,
             walk_controller: if self.rabbit_runtime.is_some() {"rabbit_virtual_constraints"}else{"ik_feedback"}.into(),
             planned_steps: self.rabbit_runtime.as_ref().map_or(0,|r|r.steps),
-            planned_status: self.rabbit_runtime.as_ref().map_or("idle",|r|if r.stopping {"stopping"}else if r.starting {"starting"}else{"walking"}).into(),
+            planned_status: self.rabbit_runtime.as_ref().map_or("idle",|r|if !self.directional_walk_enabled {"stopped"}else if r.preparing {"preparing"}else if r.stopping {"stopping"}else if r.starting {"starting"}else{"walking"}).into(),
             planned_phase: self.rabbit_runtime.as_ref().and_then(|r|self.robot.as_ref().map(|robot|{
                 let handles=if r.stance_left {[robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]}else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
                 r.model.phase(&nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64),&r.trajectory)
@@ -2100,7 +2152,7 @@ impl Simulation {
     }
 
     fn apply_directional_walk_targets(&mut self) {
-        if self.rabbit_runtime.as_ref().is_some_and(|r|!r.starting) || !self.directional_walk_enabled || self.motion_sequence.is_some() || self.gait.is_some() {
+        if self.rabbit_runtime.as_ref().is_some_and(|r|!r.starting || r.preparing) || !self.directional_walk_enabled || self.motion_sequence.is_some() || self.gait.is_some() {
             return;
         }
 

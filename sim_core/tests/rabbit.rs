@@ -251,3 +251,63 @@ fn fast_gait_brakes_before_holding_the_joints() {
         assert!(sim.state().base.unwrap().vx.abs() < 0.02);
     }
 }
+
+#[test]
+fn automatic_walk_restarts_ten_times_without_falling() {
+    use sim_core::Simulation;
+    let c = SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+    let mut sim = Simulation::from_config(c);
+    let mut previous_x = sim.state().base.unwrap().x;
+    let mut min_height = f32::MAX;
+    let mut max_pitch = 0.0_f32;
+    for cycle in 1..=10 {
+        sim.start_automatic_walk().unwrap();
+        let mut cruise_x = 0.0;
+        for frame in 0..7200 {
+            sim.step_fixed();
+            let s = sim.state();
+            let b = s.base.unwrap();
+            min_height=min_height.min(b.y); max_pitch=max_pitch.max(b.angle.abs());
+            assert!(s.walk_enabled && b.y > 1.25 && b.angle.abs() < 0.35,
+                "cycle={cycle} walk frame={frame} height={} pitch={}", b.y,b.angle);
+            assert!((b.x-previous_x).abs()<0.05, "position jump"); previous_x=b.x;
+            assert!(s.joints.values().all(|j| j.torque.abs() <= 2.55001));
+            if frame == 4800 { cruise_x=b.x; }
+        }
+        let speed=(sim.state().base.unwrap().x-cruise_x)/20.0;
+        assert!((0.90..1.10).contains(&speed), "cycle={cycle} speed={speed}");
+        sim.set_directional_walk_enabled(false);
+        let mut stopped_at=None;
+        for frame in 0..7200 {
+            sim.step_fixed();
+            let s=sim.state(); let b=s.base.unwrap();
+            assert!(b.y>1.25 && b.angle.abs()<0.35, "cycle={cycle} stop frame={frame} height={} pitch={}",b.y,b.angle);
+            assert!((b.x-previous_x).abs()<0.05, "position jump"); previous_x=b.x;
+            assert!(s.joints.values().all(|j| j.torque.abs() <= 2.55001));
+            if !s.walk_enabled && stopped_at.is_none() { stopped_at=Some(frame); }
+            if stopped_at.is_some_and(|f| frame>=f+600) {
+                assert!(b.vx.abs()<0.02, "cycle={cycle} not at rest: {}",b.vx);
+                break;
+            }
+        }
+        let stopped=stopped_at.expect("must stop");
+        assert!(stopped<6000);
+        println!("cycle={cycle}: speed={speed:.3} m/s braking={:.2}s x={previous_x:.2} min_height={min_height:.3} max_pitch={:.1}deg", stopped as f32/120.0, max_pitch.to_degrees());
+    }
+}
+
+#[test]
+fn automatic_walk_starts_after_arbitrary_ui_delay() {
+    use sim_core::Simulation;
+    for settle in [0, 3, 6, 12, 30, 60, 120, 240, 600, 1200, 3600] {
+        let c=SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+        let mut sim=Simulation::from_config(c);
+        for _ in 0..settle {sim.step_fixed();}
+        sim.start_automatic_walk().unwrap();
+        for frame in 0..7200 {
+            sim.step_fixed(); let s=sim.state(); let b=s.base.unwrap();
+            assert!(s.walk_enabled && b.y>1.25 && b.angle.abs()<0.35,"settle={settle} frame={frame} height={} angle={} status={}",b.y,b.angle,s.planned_status);
+        }
+        assert!(sim.state().base.unwrap().x>25.0,"must make forward progress");
+    }
+}

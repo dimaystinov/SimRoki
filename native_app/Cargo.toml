@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 macroquad.workspace = true
+rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3"] }
 serde.workspace = true
 serde_json.workspace = true
 sim_core = { path = "../sim_core" }

@@ -6,6 +6,8 @@ use axum::{
     Json, Router,
 };
 use macroquad::prelude::*;
+use rodio::{Decoder, OutputStream, Sink, Source};
+use std::io::Cursor;
 use macroquad::ui::{hash, root_ui, widgets};
 use serde::{Deserialize, Serialize};
 use sim_core::{
@@ -42,6 +44,32 @@ const MOTION_JSON_PATH: &str = "motion_sequence.json";
 type SharedSimulation = Arc<Mutex<Simulation>>;
 type SharedExternalControl = Arc<Mutex<ExternalControlState>>;
 
+struct MusicPlayer {
+    // Keep the output device alive for the lifetime of the sink.
+    _stream: OutputStream,
+    sink: Sink,
+    duration: Duration,
+}
+
+impl MusicPlayer {
+    fn new() -> anyhow::Result<Self> {
+        let (stream, handle) = OutputStream::try_default()?;
+        let sink = Sink::try_new(&handle)?;
+        let duration = queue_music(&sink)?;
+        Ok(Self { _stream: stream, sink, duration })
+    }
+}
+
+const MUSIC_BYTES: &[u8] = include_bytes!("../../assets/audio/why-not.mp3");
+
+fn queue_music(sink: &Sink) -> anyhow::Result<Duration> {
+    let duration = Decoder::new(Cursor::new(MUSIC_BYTES))?.total_duration().unwrap_or_default();
+    sink.pause();
+    sink.set_volume(0.5);
+    sink.append(Decoder::new_looped(Cursor::new(MUSIC_BYTES))?);
+    Ok(duration)
+}
+
 struct AppFonts {
     cyrillic: Option<Font>,
 }
@@ -76,6 +104,7 @@ struct ViewState {
 #[derive(Debug, Clone)]
 struct ControlPanelState {
     collapsed: bool,
+    walk_error: Option<String>,
     right_hip: f32,
     right_knee: f32,
     left_hip: f32,
@@ -162,6 +191,7 @@ async fn main() {
         last_mouse: vec2(0.0, 0.0),
         overlay_collapsed: false,
     };
+    let mut music = MusicPlayer::new().map_err(|error| warn!("Music unavailable: {error}")).ok();
     let mut controls = ControlPanelState::default();
     spawn_api_server(sim.clone(), external_control.clone());
 
@@ -171,7 +201,7 @@ async fn main() {
         update_view(&mut view, &sim);
         update_robofest_state(&sim, &mut controls);
         draw_world(&sim, &view, &controls, &fonts);
-        draw_control_panel(&sim, &external_control, &mut controls);
+        draw_control_panel(&sim, &external_control, &mut controls, &mut music);
         let allow_frame_stepping = !external_control_active(&external_control);
         if allow_frame_stepping {
             if let Ok(mut sim) = sim.lock() {
@@ -385,7 +415,9 @@ async fn set_rabbit_walk(State(state): State<AppState>, Json(command): Json<Rabb
             return Err(AppError{status:StatusCode::BAD_REQUEST,message:"nominal_speed_mps must be 0.3..1.0".into()});
         }
     }
-    if command.enabled {
+    if command.enabled && command.nominal_speed_mps == Some(1.0) && !command.reset_to_orbit {
+        sim.start_automatic_walk().map_err(|message| AppError { status: StatusCode::BAD_REQUEST, message })?;
+    } else if command.enabled {
         let trajectory=include_str!("../../motions/rabbit-20cm-030.json");
         let result=if command.reset_to_orbit {sim.reset_to_rabbit_orbit(trajectory)}else if sim.state().walk_controller=="rabbit_virtual_constraints" {Ok(())}else{sim.load_rabbit_trajectory(trajectory)};
         result.map_err(|message|AppError{status:StatusCode::BAD_REQUEST,message})?;
@@ -555,6 +587,7 @@ fn draw_control_panel(
     sim: &SharedSimulation,
     external_control: &SharedExternalControl,
     controls: &mut ControlPanelState,
+    music: &mut Option<MusicPlayer>,
 ) {
     let toggle = Rect::new((screen_width() - PANEL_MARGIN - 32.0).max(64.0), PANEL_MARGIN, 32.0, 32.0);
     if is_mouse_button_pressed(MouseButton::Left)
@@ -602,6 +635,39 @@ fn draw_control_panel(
     .titlebar(true)
     .movable(false)
     .ui(&mut *root_ui(), |ui| {
+        if let Some(player) = music.as_ref() {
+            if ui.button(None, if player.sink.is_paused() { "Music: play / resume" } else { "Music: pause" }) {
+                if player.sink.is_paused() { player.sink.play(); } else { player.sink.pause(); }
+            }
+            let duration = player.duration.as_secs().max(1);
+            let position = player.sink.get_pos().as_secs() % duration;
+            ui.label(None, &format!("Why Not | {:02}:{:02} / {:02}:{:02} | loop", position / 60, position % 60, duration / 60, duration % 60));
+        } else {
+            ui.label(None, "Music unavailable: no audio output");
+        }
+        ui.separator();
+        let stopping = state.planned_status == "stopping";
+        let walking = state.walk_enabled && !stopping;
+        if ui.button(None, if walking { "Stop automatic walk" } else { "Start automatic walk ~1 m/s" }) {
+            if let Ok(mut sim) = sim.lock() {
+                if walking {
+                    sim.set_directional_walk_enabled(false);
+                } else {
+                    controls.walk_error = sim.start_automatic_walk().err();
+                }
+            }
+        }
+        if let Some(message) = &controls.walk_error { ui.label(None, message); }
+        ui.label(None, if stopping {
+            "Walk: braking (about 12-15 s)"
+        } else if state.planned_status == "preparing" {
+            "Walk: preparing to restart"
+        } else if walking {
+            "Walk: automatic"
+        } else {
+            "Walk: stopped"
+        });
+        ui.separator();
         ui.label(None, &format!("time {:.2}s | {}", state.time, state.mode));
         ui.label(
             None,
@@ -792,21 +858,6 @@ fn draw_control_panel(
                 sim.set_target_direction(1.0);
                 if let Err(message)=sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json")) {
                     warn!("RABBIT trajectory rejected: {message}");
-                }
-            }
-        }
-        if ui.button(None, "RABBIT fast ~1 m/s") {
-            if let Ok(mut sim)=sim.lock() {
-                sim.set_target_direction(1.0);
-                let result = if sim.state().walk_controller == "rabbit_virtual_constraints" {
-                    Ok(())
-                } else {
-                    sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json"))
-                };
-                if let Err(message) = result.and_then(|_| sim.set_rabbit_nominal_speed(1.0)) {
-                    warn!("Fast RABBIT trajectory rejected: {message}");
-                } else {
-                    sim.set_directional_walk_enabled(true);
                 }
             }
         }
@@ -1414,6 +1465,7 @@ impl Default for ControlPanelState {
     fn default() -> Self {
         Self {
             collapsed: false,
+            walk_error: None,
             right_hip: 0.0,
             right_knee: 0.0,
             left_hip: 0.0,
@@ -1498,3 +1550,38 @@ fn external_control_active(external_control: &SharedExternalControl) -> bool {
 }
 
 
+
+#[cfg(test)]
+mod music_tests {
+    use super::*;
+
+    #[test]
+    fn music_pause_preserves_position_and_resume_advances() {
+        let decoder = Decoder::new(Cursor::new(MUSIC_BYTES)).unwrap();
+        let samples_per_second = decoder.sample_rate() as usize * decoder.channels() as usize;
+        let (sink, mut output) = Sink::new_idle();
+        assert!(queue_music(&sink).unwrap().as_secs() > 60);
+        assert!(sink.is_paused());
+        sink.play();
+        for _ in 0..samples_per_second { output.next().unwrap(); }
+        sink.pause();
+        // Let the audio mixer observe the pause at its next control boundary.
+        for _ in 0..samples_per_second / 10 { output.next().unwrap(); }
+        let paused_at = sink.get_pos();
+        for _ in 0..samples_per_second { assert_eq!(output.next().unwrap(), 0.0); }
+        assert_eq!(sink.get_pos(), paused_at);
+        assert!(paused_at.as_secs_f32() > 0.9);
+        sink.play();
+        for _ in 0..samples_per_second { output.next().unwrap(); }
+        assert!(sink.get_pos().as_secs_f32() > paused_at.as_secs_f32() + 0.9);
+    }
+
+    #[test]
+    fn bundled_music_loops_back_to_its_beginning() {
+        let sample_count = Decoder::new(Cursor::new(MUSIC_BYTES)).unwrap().count();
+        let beginning: Vec<_> = Decoder::new(Cursor::new(MUSIC_BYTES)).unwrap().take(4096).collect();
+        let mut looped = Decoder::new_looped(Cursor::new(MUSIC_BYTES)).unwrap();
+        for _ in 0..sample_count { looped.next().unwrap(); }
+        assert_eq!(looped.take(4096).collect::<Vec<_>>(), beginning);
+    }
+}
