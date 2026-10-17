@@ -35,6 +35,7 @@ const GROUND_Y: f32 = 0.0;
 const PANEL_WIDTH: f32 = 440.0;
 const PANEL_MIN_WIDTH: f32 = 320.0;
 const PANEL_MARGIN: f32 = 12.0;
+const OVERLAY_TOGGLE: Rect = Rect::new(24.0, 28.0, 32.0, 32.0);
 const CONFIG_PATH: &str = "robot_config.toml";
 const MOTION_JSON_PATH: &str = "motion_sequence.json";
 
@@ -69,10 +70,12 @@ struct ViewState {
     follow_robot: bool,
     is_panning: bool,
     last_mouse: Vec2,
+    overlay_collapsed: bool,
 }
 
 #[derive(Debug, Clone)]
 struct ControlPanelState {
+    collapsed: bool,
     right_hip: f32,
     right_knee: f32,
     left_hip: f32,
@@ -157,6 +160,7 @@ async fn main() {
         follow_robot: true,
         is_panning: false,
         last_mouse: vec2(0.0, 0.0),
+        overlay_collapsed: false,
     };
     let mut controls = ControlPanelState::default();
     spawn_api_server(sim.clone(), external_control.clone());
@@ -465,9 +469,12 @@ fn handle_keyboard(sim: &SharedSimulation) {
 
 fn update_view(view: &mut ViewState, sim: &SharedSimulation) {
     let mouse = vec2(mouse_position().0, mouse_position().1);
-    let pan_pressed = is_mouse_button_down(MouseButton::Middle)
+    if is_mouse_button_pressed(MouseButton::Left) && OVERLAY_TOGGLE.contains(mouse) {
+        view.overlay_collapsed = !view.overlay_collapsed;
+    }
+    let pan_pressed = !OVERLAY_TOGGLE.contains(mouse) && (is_mouse_button_down(MouseButton::Middle)
         || (is_mouse_button_down(MouseButton::Left) && is_key_down(KeyCode::LeftShift))
-        || (is_mouse_button_down(MouseButton::Right) && !is_key_down(KeyCode::LeftControl));
+        || (is_mouse_button_down(MouseButton::Right) && !is_key_down(KeyCode::LeftControl)));
     if pan_pressed {
         if view.is_panning {
             let delta = mouse - view.last_mouse;
@@ -549,6 +556,17 @@ fn draw_control_panel(
     external_control: &SharedExternalControl,
     controls: &mut ControlPanelState,
 ) {
+    let toggle = Rect::new((screen_width() - PANEL_MARGIN - 32.0).max(64.0), PANEL_MARGIN, 32.0, 32.0);
+    if is_mouse_button_pressed(MouseButton::Left)
+        && toggle.contains(vec2(mouse_position().0, mouse_position().1))
+    {
+        controls.collapsed = !controls.collapsed;
+    }
+    draw_panel_toggle(toggle, !controls.collapsed,
+        if controls.collapsed { "Show controls" } else { "Hide controls" });
+    if controls.collapsed {
+        return;
+    }
     let state = {
         let Ok(sim) = sim.lock() else {
             return;
@@ -572,9 +590,9 @@ fn draw_control_panel(
     let mut suspend_changed = false;
     let available_width = (screen_width() - PANEL_MARGIN * 2.0).max(PANEL_MIN_WIDTH);
     let panel_width = PANEL_WIDTH.min(available_width).max(PANEL_MIN_WIDTH.min(available_width));
-    let panel_height = (screen_height() - PANEL_MARGIN * 2.0).max(220.0);
+    let panel_height = (screen_height() - PANEL_MARGIN * 2.0 - 40.0).max(180.0);
     let panel_x = (screen_width() - panel_width - PANEL_MARGIN).max(PANEL_MARGIN);
-    let panel_y = PANEL_MARGIN.min((screen_height() - panel_height).max(0.0));
+    let panel_y = PANEL_MARGIN + 40.0;
     widgets::Window::new(
         hash!("servo-panel"),
         vec2(panel_x, panel_y),
@@ -1184,105 +1202,128 @@ fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &Vie
     }
 }
 
+fn draw_panel_toggle(button: Rect, points_right: bool, tooltip: &str) {
+    let hovered = button.contains(vec2(mouse_position().0, mouse_position().1));
+    let ink = color_u8!(57, 62, 70, 255);
+    if hovered {
+        draw_rectangle(button.x, button.y, button.w, button.h, Color::new(0.2, 0.25, 0.3, 0.10));
+    }
+    draw_rectangle_lines(button.x, button.y, button.w, button.h, 1.0, ink);
+    let cx = button.x + button.w * 0.5;
+    let cy = button.y + button.h * 0.5;
+    let direction = if points_right { 1.0 } else { -1.0 };
+    draw_line(cx - direction * 4.0, cy - 7.0, cx + direction * 4.0, cy, 2.0, ink);
+    draw_line(cx + direction * 4.0, cy, cx - direction * 4.0, cy + 7.0, 2.0, ink);
+    if hovered {
+        let width = measure_text(tooltip, None, 16, 1.0).width;
+        let x = button.x.min(screen_width() - width - PANEL_MARGIN).max(PANEL_MARGIN);
+        draw_text(tooltip, x, button.y + button.h + 18.0, 16.0, ink);
+    }
+}
+
 fn draw_overlay(
     state: &SimulationState,
     view: &ViewState,
     controls: &ControlPanelState,
     fonts: &AppFonts,
 ) {
-    draw_rectangle(24.0, 24.0, 530.0, 370.0, Color::new(1.0, 1.0, 1.0, 0.9));
-    let title = match state.scene {
-        SceneKind::Robot => "Robot mode",
-        SceneKind::Ball => "Ball smoke-test",
-    };
-    draw_text(title, 40.0, 58.0, 32.0, color_u8!(34, 40, 49, 255));
-    draw_text(&format!("time: {:.2}s", state.time), 40.0, 92.0, 24.0, color_u8!(57, 62, 70, 255));
-    draw_text(&format!("mode: {}", state.mode), 40.0, 120.0, 24.0, color_u8!(57, 62, 70, 255));
-    draw_text(
-        &format!(
-            "walk: {} {}  {:.2}/{:.2} m/s",
-            if state.walk_enabled { "on" } else { "off" },
-            if state.walk_direction >= 0.0 { "->" } else { "<-" },
-            state.walk_speed,
-            state.walk_target_speed
-        ),
-        40.0,
-        148.0,
-        24.0,
-        color_u8!(57, 62, 70, 255),
-    );
-
-    if let Some(base) = &state.base {
-        let warning = base.angle.abs() > 20.0_f32.to_radians();
-        draw_text(
-            &format!("Torso tilt: {:+.1} deg | rate: {:+.1} deg/s", base.angle.to_degrees(), base.omega.to_degrees()),
-            40.0, 176.0, 22.0,
-            if warning { color_u8!(190, 55, 40, 255) } else { color_u8!(40, 110, 75, 255) },
-        );
-        draw_text(
-            &format!("Actual speed: {:+.2} m/s | {}", base.vx, state.walk_support_state),
-            40.0, 202.0, 20.0, color_u8!(57, 62, 70, 255),
-        );
-    }
-    let mut y = 230.0;
-    for name in ["right_hip", "right_knee", "left_hip", "left_knee"] {
-        if let Some(joint) = state.joints.get(name) {
-            draw_text(
-                &format!(
-                    "{name}: {:.1}° -> {:.1}°",
-                    joint.angle.to_degrees(),
-                    joint.target.to_degrees()
-                ),
-                40.0,
-                y,
-                22.0,
-                color_u8!(50, 61, 79, 255),
-            );
-            y += 24.0;
-        }
-    }
-
-    draw_text(
-        &format!("contacts: L={} R={}", state.contacts.left_foot, state.contacts.right_foot),
-        40.0,
-        y + 8.0,
-        22.0,
-        color_u8!(50, 61, 79, 255),
-    );
-    y += 40.0;
-    draw_text(
-        &format!("zoom: {:.2}x", view.zoom),
-        40.0,
-        y + 8.0,
-        20.0,
-        color_u8!(70, 78, 90, 255),
-    );
-    draw_text(
-        if view.follow_robot {
-            "wheel zoom, drag pan, Left/Right walk, S stop, F/Space center robot, R reset"
-        } else {
-            "wheel zoom, drag pan, Left/Right walk, S stop, F/Space recenter robot, R reset"
-        },
-        40.0,
-        y + 28.0,
-        18.0,
-        color_u8!(103, 110, 121, 255),
-    );
-
-    let status_y = y + 58.0;
-    if controls.robofest_finish_x.is_some() {
+    draw_panel_toggle(OVERLAY_TOGGLE, view.overlay_collapsed,
+        if view.overlay_collapsed { "Show info" } else { "Hide info" });
+    if !view.overlay_collapsed {
+        let title = match state.scene {
+            SceneKind::Robot => "Robot mode",
+            SceneKind::Ball => "Ball smoke-test",
+        };
+        draw_text(title, 68.0, 55.0, 32.0, color_u8!(34, 40, 49, 255));
+        draw_text(&format!("time: {:.2}s", state.time), 40.0, 92.0, 24.0, color_u8!(57, 62, 70, 255));
+        draw_text(&format!("mode: {}", state.mode), 40.0, 120.0, 24.0, color_u8!(57, 62, 70, 255));
         draw_text(
             &format!(
-                "ROBOFEST 2026: {:.2}s | robot={} | ball={}",
-                controls.robofest_elapsed_time,
-                controls.robofest_robot_reached,
-                controls.robofest_ball_reached
+                "walk: {} {}  {:.2}/{:.2} m/s",
+                if state.walk_enabled { "on" } else { "off" },
+                if state.walk_direction >= 0.0 { "->" } else { "<-" },
+                state.walk_speed,
+                state.walk_target_speed
             ),
             40.0,
-            status_y,
-            20.0,
+            148.0,
+            24.0,
             color_u8!(57, 62, 70, 255),
         );
+
+        if let Some(base) = &state.base {
+            let warning = base.angle.abs() > 20.0_f32.to_radians();
+            draw_text(
+                &format!("Torso tilt: {:+.1} deg | rate: {:+.1} deg/s", base.angle.to_degrees(), base.omega.to_degrees()),
+                40.0, 176.0, 22.0,
+                if warning { color_u8!(190, 55, 40, 255) } else { color_u8!(40, 110, 75, 255) },
+            );
+            draw_text(
+                &format!("Actual speed: {:+.2} m/s | {}", base.vx, state.walk_support_state),
+                40.0, 202.0, 20.0, color_u8!(57, 62, 70, 255),
+            );
+        }
+        let mut y = 230.0;
+        for name in ["right_hip", "right_knee", "left_hip", "left_knee"] {
+            if let Some(joint) = state.joints.get(name) {
+                draw_text(
+                    &format!(
+                        "{name}: {:.1}° -> {:.1}°",
+                        joint.angle.to_degrees(),
+                        joint.target.to_degrees()
+                    ),
+                    40.0,
+                    y,
+                    22.0,
+                    color_u8!(50, 61, 79, 255),
+                );
+                y += 24.0;
+            }
+        }
+
+        draw_text(
+            &format!("contacts: L={} R={}", state.contacts.left_foot, state.contacts.right_foot),
+            40.0,
+            y + 8.0,
+            22.0,
+            color_u8!(50, 61, 79, 255),
+        );
+        y += 40.0;
+        draw_text(
+            &format!("zoom: {:.2}x", view.zoom),
+            40.0,
+            y + 8.0,
+            20.0,
+            color_u8!(70, 78, 90, 255),
+        );
+        draw_text(
+            if view.follow_robot {
+                "wheel zoom, drag pan, Left/Right walk, S stop, F/Space center robot, R reset"
+            } else {
+                "wheel zoom, drag pan, Left/Right walk, S stop, F/Space recenter robot, R reset"
+            },
+            40.0,
+            y + 28.0,
+            18.0,
+            color_u8!(103, 110, 121, 255),
+        );
+
+        let status_y = y + 58.0;
+        if controls.robofest_finish_x.is_some() {
+            draw_text(
+                &format!(
+                    "ROBOFEST 2026: {:.2}s | robot={} | ball={}",
+                    controls.robofest_elapsed_time,
+                    controls.robofest_robot_reached,
+                    controls.robofest_ball_reached
+                ),
+                40.0,
+                status_y,
+                20.0,
+                color_u8!(57, 62, 70, 255),
+            );
+        }
+
     }
 
     if let Some(message) = &controls.robofest_result_message {
@@ -1357,6 +1398,7 @@ fn world_to_screen(world: Vec2, view: &ViewState) -> Vec2 {
 impl Default for ControlPanelState {
     fn default() -> Self {
         Self {
+            collapsed: false,
             right_hip: 0.0,
             right_knee: 0.0,
             left_hip: 0.0,
