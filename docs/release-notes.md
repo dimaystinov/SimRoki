@@ -1,11 +1,12 @@
-RABBIT-based walking, higher steps and faster forward movement.
+RABBIT walking at approximately 1 m/s, higher steps and collapsible panels.
 
 - Wide standing pose; both knees bend in the same anatomical direction.
 - Five-link dynamics, impact/relabeling and constrained offline gait optimization using SimRoki's own parameters.
 - State-phased motor control: the reference advances faster as the body moves faster.
-- Forward torso lean, contact-driven leg changes, startup from rest and double-support stop.
-- New higher-step profile: native tests measured approximately 0.23 m/s, 20 cm steps and 3 cm foot lift after settling. Nominal planner speed is not actual speed.
-- Native RABBIT button and API with nominal profiles from 0.3 to 0.6 m/s.
+- Forward torso lean, contact-driven leg changes and startup from rest. Fast-mode braking takes about 15–17 seconds before the double-support stop.
+- New fast profile: native tests measured approximately 0.97–0.99 m/s, 27 cm steps, 5.5 cm foot lift and 14° forward lean. Nominal planner speed is not actual speed.
+- Independent collapse/expand buttons for both panels; Robot mode has no solid background.
+- Native RABBIT button and API with nominal profiles from 0.3 to 1.0 m/s.
 - Primary RABBIT references, model derivation, reproducible validation and numerical return-map analysis included.
 - Cross-platform contact math and IK use deterministic library functions; startup clears the standing servo integral, with gains recalibrated for this physics mode.
 
@@ -14,7 +15,7 @@ Downloads:
 - **macOS 14+ / Apple Silicon:** extract `SimRoki-macos-arm64.zip` and open `SimRoki.app`.
 - SHA-256 checksum files accompany both archives.
 
-Neither Rust nor Python is required for the desktop app. Python is optional for the SDK and offline planner. Press **S** to stop and **R** to reset; use **RABBIT planned walk** to start the planned controller. See `docs/walking-controller.md` for controls and speed API examples.
+Neither Rust nor Python is required for the desktop app. Python is optional for the SDK and offline planner. Press **S** to stop and **R** to reset; use **RABBIT planned walk** for the slow profile or **RABBIT fast ~1 m/s** for the fast profile. See `docs/walking-controller.md` for controls and speed API examples.
 
 Validation includes release-mode Rust tests on both platforms and a smoke test of each packaged native library. The macOS native window was also exercised locally. Windows interactive graphics were not manually tested. Builds are not Developer-ID/code-signing certified or notarized.
 

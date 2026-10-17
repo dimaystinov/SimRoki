@@ -381,8 +381,8 @@ async fn set_rabbit_walk(State(state): State<AppState>, Json(command): Json<Rabb
     mark_external_control(&state.external_control);
     let mut sim=state.sim.lock().map_err(|_|AppError::lock())?;
     if let Some(speed)=command.nominal_speed_mps {
-        if !speed.is_finite() || !(0.3..=0.6).contains(&speed) {
-            return Err(AppError{status:StatusCode::BAD_REQUEST,message:"nominal_speed_mps must be 0.3..0.6".into()});
+        if !speed.is_finite() || !(0.3..=1.0).contains(&speed) {
+            return Err(AppError{status:StatusCode::BAD_REQUEST,message:"nominal_speed_mps must be 0.3..1.0".into()});
         }
     }
     if command.enabled {
@@ -792,6 +792,21 @@ fn draw_control_panel(
                 sim.set_target_direction(1.0);
                 if let Err(message)=sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json")) {
                     warn!("RABBIT trajectory rejected: {message}");
+                }
+            }
+        }
+        if ui.button(None, "RABBIT fast ~1 m/s") {
+            if let Ok(mut sim)=sim.lock() {
+                sim.set_target_direction(1.0);
+                let result = if sim.state().walk_controller == "rabbit_virtual_constraints" {
+                    Ok(())
+                } else {
+                    sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json"))
+                };
+                if let Err(message) = result.and_then(|_| sim.set_rabbit_nominal_speed(1.0)) {
+                    warn!("Fast RABBIT trajectory rejected: {message}");
+                } else {
+                    sim.set_directional_walk_enabled(true);
                 }
             }
         }

@@ -26,6 +26,10 @@ and periodic position/velocity after impact. `--initial` accepts a previous plan
 as an optimization seed. `--clearance` controls the minimum mid-swing clearance.
 The solver's constraint residual alone is insufficient: always run validation.
 The output records the configuration SHA-256 and solver status.
+`--constraint-margin .03` reserves 3% of motor and friction bounds to prevent
+between-node interpolation overshoot in faster trajectories. The fast profile
+can be reproduced with `--step .25 --speed 1 --intervals 120 --clearance .06
+--lean .20 --constraint-margin .03 --initial motions/rabbit-25cm-100-high.json`.
 
 `validate.py` independently integrates the controls using SciPy and samples
 between mesh nodes. It checks dynamics residual, unilateral/friction feasibility,

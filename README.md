@@ -68,8 +68,12 @@ switching, bounded torques and a double-support stop. The existing **Walk right*
 IK controller remains available. See [controls, API and measured results](docs/walking-controller.md)
 and [reproducible planner checks](planner/README.md).
 
-The ideal orbit is 20 cm; measured native steps are approximately 17–18 cm in
-RABBIT mode and 22–23 cm in the IK reference. Requested/nominal speed is not yet
+The **RABBIT fast ~1 m/s** button selects a higher-step profile: native trials
+measure approximately 0.97–1.00 m/s, 27 cm steps, 5.5 cm foot lift and 14° forward
+trunk lean. The slow RABBIT orbit retains 20 cm nominal steps (17–18 cm measured),
+and the IK reference measures 22–23 cm. The arrow buttons at the upper left and
+right independently hide/show the information and servo panels; Robot mode has
+no solid background. Requested/nominal speed is not yet
 an accurate measured-speed command. The point-foot return map has a numerical
 spectral radius of about 0.818; this is not a formal stability proof for Rapier.
 See [implementation status and remaining limits](docs/implementation-plan.md).

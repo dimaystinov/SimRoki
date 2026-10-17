@@ -10,13 +10,15 @@ import numpy as np
 from model import FiveLinkModel
 
 
-def solve(config, output, length=.20, speed=.3, intervals=40, initial=None, clearance=.025, lean=.06):
+def solve(config, output, length=.20, speed=.3, intervals=40, initial=None, clearance=.025, lean=.06, constraint_margin=0.0):
     model=FiveLinkModel(config); op=ca.Opti(); n=intervals
     Q=op.variable(5,n+1); V=op.variable(5,n+1); U=op.variable(4,n+1)
     T=length/speed; dt=T/n
-    limit=model.config['servo']['max_torque']
-    vmax=np.deg2rad(model.config['servo']['max_speed_deg_s'])
-    mu=min(model.config['physics']['ground_friction'],model.config['robot']['shin']['friction'])
+    if not 0 <= constraint_margin < .25:raise ValueError('constraint margin must be in [0, .25)')
+    reserve=1-constraint_margin
+    limit=model.config['servo']['max_torque']*reserve
+    vmax=np.deg2rad(model.config['servo']['max_speed_deg_s'])*reserve
+    mu=min(model.config['physics']['ground_friction'],model.config['robot']['shin']['friction'])*reserve
     op.subject_to(op.bounded(-1.2,Q,1.2))
     op.subject_to(op.bounded(-vmax,V,vmax))
     op.subject_to(op.bounded(-limit,U,limit))
@@ -83,12 +85,12 @@ def solve(config, output, length=.20, speed=.3, intervals=40, initial=None, clea
     result={'schema_version':1,'model':'simroki-five-link-point-foot','config_sha256':hashlib.sha256(Path(config).read_bytes()).hexdigest(),
             'step_length_m':length,'speed_mps':speed,'duration_s':T,'phase':np.linspace(0,1,n+1).tolist(),
             'q':q.T.tolist(),'dq':v.T.tolist(),'torque':u.T.tolist(),'max_constraint_violation':violation,
-            'minimum_clearance_m':clearance,'desired_forward_lean_rad':lean,'objective':float(solution.value(cost)),'solver_status':solution.stats()['return_status']}
+            'constraint_margin':constraint_margin,'minimum_clearance_m':clearance,'desired_forward_lean_rad':lean,'objective':float(solution.value(cost)),'solver_status':solution.stats()['return_status']}
     Path(output).parent.mkdir(parents=True,exist_ok=True);Path(output).write_text(json.dumps(result,indent=2))
     print(json.dumps({k:v for k,v in result.items() if k not in ['phase','q','dq','torque']},indent=2))
     return result
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--config',default='robot_config.toml');p.add_argument('--output',default='motions/rabbit-20cm.json')
-    p.add_argument('--step',type=float,default=.20);p.add_argument('--speed',type=float,default=.30);p.add_argument('--intervals',type=int,default=40);p.add_argument('--initial');p.add_argument('--clearance',type=float,default=.025);p.add_argument('--lean',type=float,default=.06)
-    a=p.parse_args();solve(a.config,a.output,a.step,a.speed,a.intervals,a.initial,a.clearance,a.lean)
+    p.add_argument('--step',type=float,default=.20);p.add_argument('--speed',type=float,default=.30);p.add_argument('--intervals',type=int,default=40);p.add_argument('--initial');p.add_argument('--clearance',type=float,default=.025);p.add_argument('--lean',type=float,default=.06);p.add_argument('--constraint-margin',type=float,default=0.0)
+    a=p.parse_args();solve(a.config,a.output,a.step,a.speed,a.intervals,a.initial,a.clearance,a.lean,a.constraint_margin)

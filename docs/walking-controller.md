@@ -47,8 +47,9 @@ The startup controller builds momentum from rest, then uses the 0.5 m/s nominal
 orbit and gradually blends toward the selected orbit at touchdowns. The nominal
 speed is a parameter of the ideal point-foot plan, not a promise of Rapier speed.
 
-Stop waits for double support and holds the measured joint configuration with
-damping. A stalled step or severe fall disables the planned controller. The
+Stop first blends a fast gait back toward the startup orbit, then waits for
+double support and low forward speed before holding the measured joints with
+damping. Braking is gradual, not an instantaneous freeze. A stalled step or severe fall disables the planned controller. The
 explicit `reset_to_orbit` experiment initializes position **and velocity** once;
 it is never used automatically for startup or recovery.
 
@@ -64,7 +65,7 @@ not retained. Higher nominal-speed settings can shorten actual steps further.
 ### API
 
 - `POST /walk/rabbit` with `{"enabled":true}` starts the planned controller.
-- Optional `"nominal_speed_mps":0.3` through `0.6` changes its reference at
+- Optional `"nominal_speed_mps":0.3` through `1.0` changes its reference at
   touchdowns. Repeating this request does not restart the controller.
 - `{"enabled":false}` requests a stop at double support.
 - `{"enabled":true,"reset_to_orbit":true}` is an explicit experiment reset.
@@ -102,3 +103,33 @@ converge to a shorter-step gait, so the numerical tests also retain that limitat
 
 The six-tenths nominal value must not be presented as actual forward speed.
 Use `/state` or displacement over elapsed simulation time for measurement.
+
+
+## Approximately 1 m/s with higher steps and more forward lean
+
+`motions/rabbit-25cm-100-high.json` uses a 25 cm nominal step, 1.0 m/s nominal
+speed, 6 cm minimum mid-swing clearance and a 0.20 rad forward-lean objective.
+The optimizer reserves 3% of motor speed/torque and friction limits, preventing
+interpolation between mesh points from exceeding the physical constraints.
+Independent dense integration and contact checks are in the adjacent validation
+report. Runtime tracking gains increase toward Kp=400, Kd=15 for this profile;
+low-speed gains remain Kp=100, Kd=20. Torques remain limited to 2.55 N m.
+
+Four 120 s native trials starting after 0/1/5/10 s standing measured steady speed
+0.97–0.99 m/s, peak foot lift about 5.5 cm, mean forward lean 13.8° and torso
+height above 1.28 m. Actual steps are about 27 cm, longer than the original
+20 cm request. These are measured flat-ground trials, not a guarantee for
+arbitrary initial conditions. The fast command ramps over successive contacts. Stopping from full speed
+takes approximately 15–17 seconds in the tested starts; it follows the startup
+orbit in reverse while retaining strong tracking, then holds at double support.
+
+Use **RABBIT fast ~1 m/s** or:
+
+```sh
+curl -X POST http://127.0.0.1:8080/walk/rabbit \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"nominal_speed_mps":1.0}'
+```
+
+The left information overlay has no solid background. Arrow buttons at the
+upper left and right independently collapse and expand the two panels.

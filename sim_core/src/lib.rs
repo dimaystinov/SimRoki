@@ -1256,7 +1256,15 @@ impl Simulation {
     pub fn set_directional_walk_enabled(&mut self, enabled: bool) {
         if enabled {if let Some(runtime)=self.rabbit_runtime.as_mut() {runtime.stopping=false;}}
         if !enabled {
-            if let Some(runtime)=self.rabbit_runtime.as_mut() {runtime.stopping=true;return;}
+            if let Some(runtime)=self.rabbit_runtime.as_mut() {
+                if runtime.stopping { return; }
+                runtime.stopping=true;
+                // Brake through the slow orbit before holding a fast-moving body.
+                let braking_plan=if runtime.trajectory.speed_mps>0.6 {include_str!("../../motions/rabbit-20cm-050.json")}
+                    else {include_str!("../../motions/rabbit-20cm-030.json")};
+                runtime.goal=Some(rabbit::RabbitTrajectory::from_json(braking_plan).expect("validated built-in braking gait"));
+                return;
+            }
         }
         let was_enabled = self.directional_walk_enabled;
         self.directional_walk_enabled = enabled;
@@ -1288,7 +1296,7 @@ impl Simulation {
     pub fn set_walk_target_speed(&mut self, speed_mps: f32) {
         if !speed_mps.is_finite() {return;}
         if speed_mps>0.0 && self.rabbit_runtime.is_some() {
-            let _=self.set_rabbit_nominal_speed(speed_mps.clamp(0.3,0.6));return;
+            let _=self.set_rabbit_nominal_speed(speed_mps.clamp(0.3,1.0));return;
         }
         if speed_mps<=0.0 && self.rabbit_runtime.is_some() {self.set_directional_walk_enabled(false);}
         self.walk_target_speed = speed_mps.clamp(0.0, self.config.walk.max_speed_mps.max(0.1));
@@ -1565,13 +1573,17 @@ impl Simulation {
     /// Change the nominal point-foot orbit speed; transitions occur at touchdown.
     /// Actual Rapier speed is measured separately because contact geometry differs.
     pub fn set_rabbit_nominal_speed(&mut self,speed:f32)->Result<(),String> {
-        if !speed.is_finite() || !(0.3..=0.6).contains(&speed) {
-            return Err("planned nominal speed must be between 0.3 and 0.6 m/s".into());
+        if !speed.is_finite() || !(0.3..=1.0).contains(&speed) {
+            return Err("planned nominal speed must be between 0.3 and 1.0 m/s".into());
         }
         let slow=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-030.json"))?;
         let fast=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json"))?;
         let runtime=self.rabbit_runtime.as_mut().ok_or("RABBIT controller is not enabled")?;
-        runtime.goal=Some(if speed>0.5 {
+        runtime.goal=Some(if speed>0.6 {
+            let higher=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-060-high.json"))?;
+            let fastest=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-25cm-100-high.json"))?;
+            if speed>=1.0 {fastest} else {higher.blend(&fastest,((speed-0.6)/0.4) as f64)}
+        } else if speed>0.5 {
             let higher=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-060-high.json"))?;
             fast.blend(&higher,((speed-0.5)/0.1) as f64)
         } else {slow.blend(&fast,((speed-0.3)/0.2) as f64)});
@@ -1584,7 +1596,8 @@ impl Simulation {
 
     fn apply_rabbit_forces(&mut self)->bool {
         let Some(mut runtime)=self.rabbit_runtime.take() else {return false;};
-        if runtime.stopping && self.foot_contact(true) && self.foot_contact(false) {
+        let stop_speed=self.robot.as_ref().map(|r|self.bodies[r.torso].linvel().x.abs()).unwrap_or(0.0);
+        if runtime.stopping && runtime.trajectory.speed_mps<0.55 && stop_speed<0.25 && self.foot_contact(true) && self.foot_contact(false) {
             if let Some(robot)=self.robot.as_mut() {
                 for servo in robot.servos.values_mut() {
                     let angle=self.bodies[servo.child].rotation().angle()-self.bodies[servo.parent].rotation().angle();
@@ -1614,7 +1627,7 @@ impl Simulation {
             runtime.stance_left=!runtime.stance_left;runtime.elapsed=0.0;runtime.steps+=1;
             if runtime.steps>5 {
                 if let Some(goal)=runtime.goal.as_ref() {
-                    runtime.trajectory=runtime.trajectory.blend(goal,0.10);
+                    runtime.trajectory=runtime.trajectory.blend(goal,if runtime.stopping {0.05} else {0.10});
                 }
             }
         }
@@ -1623,7 +1636,13 @@ impl Simulation {
         }else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
         let q=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64);
         let v=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].angvel() as f64);
-        let Some(torques)=runtime.model.control(&q,&v,&runtime.trajectory,100.0,20.0) else {
+        // Higher-speed references need stronger position tracking, but excessive
+        // damping suppresses forward motion in the finite-foot contact model.
+        let fast_blend=if runtime.stopping && runtime.goal.as_ref().is_some_and(|g|g.speed_mps>=0.5) {1.0}
+            else if runtime.trajectory.speed_mps<=0.60001 {0.0}
+            else {((runtime.trajectory.speed_mps-0.6)/0.4).clamp(0.0,1.0)};
+        let (fast_kp,fast_kd)=(400.0,15.0);
+        let Some(torques)=runtime.model.control(&q,&v,&runtime.trajectory,100.0+(fast_kp-100.0)*fast_blend,20.0+(fast_kd-20.0)*fast_blend) else {
             self.directional_walk_enabled=false;return false;
         };
         let names=if runtime.stance_left {[JointName::LeftHip,JointName::LeftKnee,JointName::RightHip,JointName::RightKnee]}

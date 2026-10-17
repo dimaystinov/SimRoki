@@ -192,3 +192,62 @@ fn higher_faster_orbit_increases_actual_speed_and_foot_lift() {
         assert!(lift > 0.025, "actual swing height {lift}");
     }
 }
+
+#[test]
+fn one_meter_per_second_gait_has_higher_steps_and_forward_lean() {
+    use sim_core::Simulation;
+    for settle in [0, 120, 600, 1200] {
+        let c = SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+        let mut sim = Simulation::from_config(c);
+        for _ in 0..settle { sim.step_fixed(); }
+        sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json")).unwrap();
+        sim.set_rabbit_nominal_speed(1.0).unwrap();
+        let mut start_x = 0.0;
+        let mut lift = 0.0_f32;
+        let mut lean_sum = 0.0;
+        for frame in 0..14400 {
+            sim.step_fixed();
+            let s = sim.state();
+            let b = s.base.unwrap();
+            assert!(s.walk_enabled && b.y > 1.25 && b.angle.abs() < 0.35,
+                "fast gait fell: settle={settle} frame={frame} height={} pitch={}", b.y, b.angle);
+            assert!(s.joints.values().all(|j| j.torque.abs() <= 2.55001));
+            if frame == 7200 { start_x = b.x; }
+            if frame >= 7200 {
+                lift = lift.max(s.left_foot.unwrap()[1]).max(s.right_foot.unwrap()[1]);
+                lean_sum += -b.angle;
+            }
+        }
+        let speed = (sim.state().base.unwrap().x - start_x) / 60.0;
+        let lean = lean_sum / 7200.0;
+        println!("fast settle={settle}: speed={speed:.3} m/s lift={lift:.3} m lean={:.1} deg", lean.to_degrees());
+        assert!((0.90..1.10).contains(&speed), "measured speed {speed}");
+        assert!(lift > 0.045, "measured foot lift {lift}");
+        assert!(lean > 10.0_f32.to_radians(), "measured forward lean {lean}");
+    }
+}
+
+#[test]
+fn fast_gait_brakes_before_holding_the_joints() {
+    use sim_core::Simulation;
+    for settle in [0, 1200] {
+        let c = SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+        let mut sim = Simulation::from_config(c);
+        for _ in 0..settle { sim.step_fixed(); }
+        sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-25cm-100-high.json")).unwrap();
+        let mut stop_frame = None;
+        for frame in 0..14400 {
+            if frame == 7200 || frame == 9000 { sim.disable_rabbit_controller(); }
+            sim.step_fixed();
+            let s = sim.state();
+            let b = s.base.unwrap();
+            assert!(b.y > 1.25 && b.angle.abs() < 0.35, "braking fell at {frame}");
+            if frame < 7200 { assert!(s.walk_enabled); }
+            if frame >= 7200 && !s.walk_enabled && stop_frame.is_none() { stop_frame = Some(frame); }
+        }
+        let stopped = stop_frame.expect("must finish braking");
+        println!("fast stop settle={settle}: {:.1}s", (stopped - 7200) as f32 / 120.0);
+        assert!(stopped < 13200, "braking must finish within 50 seconds");
+        assert!(sim.state().base.unwrap().vx.abs() < 0.02);
+    }
+}
