@@ -1262,6 +1262,12 @@ impl Simulation {
         self.directional_walk_enabled = enabled;
         if enabled {
             if !was_enabled {
+                // Do not carry standing integral error into a moving reference.
+                if let Some(robot) = self.robot.as_mut() {
+                    for servo in robot.servos.values_mut() {
+                        servo.integral_error = 0.0;
+                    }
+                }
                 self.walk_measured_speed = 0.0;
                 self.walk_elapsed = 0.0;
                 self.refresh_walk_anchors_from_pose();

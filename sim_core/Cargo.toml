@@ -12,3 +12,4 @@ rapier2d.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+libm = "0.2"

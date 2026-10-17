@@ -177,7 +177,7 @@ fn higher_faster_orbit_increases_actual_speed_and_foot_lift() {
             sim.step_fixed();
             let s = sim.state();
             let b = s.base.unwrap();
-            assert!(s.walk_enabled && b.y > 1.25 && b.angle.abs() < 0.22);
+            assert!(s.walk_enabled && b.y > 1.25 && b.angle.abs() < 0.22, "settle={settle} frame={frame} enabled={} height={} pitch={} steps={}", s.walk_enabled, b.y, b.angle, s.planned_steps);
             if frame == 7200 {
                 x = b.x;
             }

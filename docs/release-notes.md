@@ -7,6 +7,7 @@ RABBIT-based walking, higher steps and faster forward movement.
 - New higher-step profile: native tests measured approximately 0.23 m/s, 20 cm steps and 3 cm foot lift after settling. Nominal planner speed is not actual speed.
 - Native RABBIT button and API with nominal profiles from 0.3 to 0.6 m/s.
 - Primary RABBIT references, model derivation, reproducible validation and numerical return-map analysis included.
+- Cross-platform contact math and IK use deterministic library functions; startup clears the standing servo integral, with gains recalibrated for this physics mode.
 
 Downloads:
 - **Windows x64:** extract `SimRoki-windows-x64.zip` and run `Start-SimRoki.cmd`.

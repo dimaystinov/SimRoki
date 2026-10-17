@@ -29,10 +29,12 @@ pub struct FiveLinkKinematics {
 }
 
 impl FiveLinkKinematics {
+    // Match Rapier's enhanced-determinism math; platform CRT trig can change
+    // touchdown timing and send the point-foot gait into a different orbit.
     pub fn pelvis_from_torso(&self, torso_center: [f32; 2], torso_angle: f32) -> [f32; 2] {
         [
-            torso_center[0] + torso_angle.sin() * self.torso_length * 0.5,
-            torso_center[1] - torso_angle.cos() * self.torso_length * 0.5,
+            torso_center[0] + libm::sinf(torso_angle) * self.torso_length * 0.5,
+            torso_center[1] - libm::cosf(torso_angle) * self.torso_length * 0.5,
         ]
     }
 
@@ -46,8 +48,8 @@ impl FiveLinkKinematics {
         let thigh_abs = torso_angle + hip_angle;
         let shin_abs = thigh_abs + knee_angle;
         [
-            pelvis[0] + thigh_abs.sin() * self.thigh_length + shin_abs.sin() * self.shin_length,
-            pelvis[1] - thigh_abs.cos() * self.thigh_length - shin_abs.cos() * self.shin_length,
+            pelvis[0] + libm::sinf(thigh_abs) * self.thigh_length + libm::sinf(shin_abs) * self.shin_length,
+            pelvis[1] - libm::cosf(thigh_abs) * self.thigh_length - libm::cosf(shin_abs) * self.shin_length,
         ]
     }
 
@@ -63,17 +65,20 @@ impl FiveLinkKinematics {
         let distance_sq = dx * dx + dy_down * dy_down;
         let reach_min = (self.thigh_length - self.shin_length).abs() + 1e-4;
         let reach_max = (self.thigh_length + self.shin_length) - 1e-4;
-        let distance = distance_sq.sqrt().clamp(reach_min, reach_max);
-        let scale = if distance_sq > 1e-6 { distance / distance_sq.sqrt() } else { 0.0 };
+        let distance = libm::sqrtf(distance_sq).clamp(reach_min, reach_max);
+        let scale = if distance_sq > 1e-6 { distance / libm::sqrtf(distance_sq) } else { 0.0 };
         let dx = dx * scale;
         let dy_down = dy_down * scale;
         let cos_knee = ((dx * dx + dy_down * dy_down) - self.thigh_length.powi(2) - self.shin_length.powi(2))
             / (2.0 * self.thigh_length * self.shin_length);
         let cos_knee = cos_knee.clamp(-1.0, 1.0);
-        let knee_mag = cos_knee.acos();
+        let knee_mag = libm::acosf(cos_knee);
         let knee = side.sign() * knee_mag;
-        let hip_world = dx.atan2(dy_down)
-            - (self.shin_length * knee.sin()).atan2(self.thigh_length + self.shin_length * knee.cos());
+        let hip_world = libm::atan2f(dx, dy_down)
+            - libm::atan2f(
+                self.shin_length * libm::sinf(knee),
+                self.thigh_length + self.shin_length * libm::cosf(knee),
+            );
         Some(LegIkSolution {
             hip: normalize_angle(hip_world - torso_angle),
             knee: normalize_angle(knee),
