@@ -151,3 +151,32 @@ not a guarantee for arbitrary disturbances or changed model parameters.
 
 The first automatic start settles the standing pose for one second before leaning.
 A separate regression covers start delays of 0, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, and 30 seconds. The GUI button and 1 m/s API request use the same entry point.
+
+### Moving ball strike
+
+The ball spawns 10 m ahead of the initial torso position. Automatic walking keeps
+its 1 m/s target during approach and contact; it does not command braking for a kick.
+When the ball is within 0.45 m, a grounded stance leg and swing phase gate a smooth
+additional hip/knee torque pulse. The stance hip compensates the added swing-hip
+reaction. Only one swing is assisted per approach; a separation greater than
+0.9 m rearms assistance. This avoids repeatedly accelerating the robot while it
+chases a nearby rolling ball. Assistance is inhibited during stopping, excessive torso tilt/angular
+velocity, or when the ball is already moving away quickly. Existing motor torque
+and speed limits remain active. Ball motion comes from physical collision response.
+
+Shin contact with the ball is no longer treated as ground support. This prevents
+premature leg switching and false double support during impact.
+
+The moving-kick regression runs 15 two-minute simulations: ball positions 9.5,
+9.8, 10, 10.2, and 10.5 m, with three startup delays. It checks upright posture,
+continuous body/ball motion, torque limits, ball progress, unchanged commanded
+speed, and continued walking above 0.90 m/s. Legacy unobstructed gait tests keep
+the ball at 1000 m explicitly. These checks cover the current flat-ground model
+and ball; they do not establish stability for arbitrary ball masses or obstacles.
+
+A further regression runs two ten-minute simulations with startup delays of
+2 and 45 physics ticks. Before the one-swing limit, these delays reproduced
+falls during repeated encounters. A separate sweep of 66 startup delays at the
+10 m ball position completed ten minutes each without falling, with peak ball
+speeds of 1.51–1.60 m/s. This supersedes the earlier 1.65 m/s result: that stronger
+repeated assistance was not stable on longer runs.

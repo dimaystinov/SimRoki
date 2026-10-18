@@ -4,7 +4,9 @@ use sim_core::{Simulation, SimulationConfig};
 fn forward_walk_remains_upright_from_different_start_times() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml");
     for settle_steps in [0, 120, 600, 1200] {
-        let config = SimulationConfig::load_from_file(path).unwrap();
+        let mut config = SimulationConfig::load_from_file(path).unwrap();
+        // Keep the original clear-track scenario; fast ball strikes have a separate regression.
+        config.robot.ball_spawn_offset_x_m = 1000.0;
         let mut sim = Simulation::from_config(config);
         for _ in 0..settle_steps {
             sim.step_fixed();

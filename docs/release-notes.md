@@ -1,31 +1,26 @@
-# Automatic walking restart and music
+# Первый официальный Фонк Релиз
 
-- Start/stop automatic walking from the top of the right control panel.
-- Ten consecutive start/stop cycles at approximately 1 m/s verified without falls.
-- Restart preparation preserves physical position and applies joint torques only.
-- Bundled GHOSTFACE PLAYA — Why Not, with a separate looping music player.
-- Music pause preserves playback position; resume continues from that point.
-- Music is embedded, works offline, and starts paused.
+SimRoki с неоновой сценой под GHOSTFACE PLAYA — Why Not и записью MP4.
 
-RABBIT walking at approximately 1 m/s, higher steps and collapsible panels.
+- Резкие смены фона по вручную отмеченным границам: исходный фон, голубой неон, оранжевый неон, затем случайные неоновые цвета без повторов подряд. Цвета робота сохраняются.
+- Музыка зациклена. Пауза сохраняет позицию, продолжение играет с неё.
+- Кнопка записи справа внизу сохраняет H.264/AAC MP4 со звуком приложения. Кнопка и таймер в видео не попадают. Повторное нажатие завершает запись; дождитесь надписи Saved перед закрытием.
+- Для записи нужен FFmpeg в PATH (на macOS также поддерживается Homebrew). FFmpeg не включён в архивы. Файлы сохраняются в Movies/SimRoki на macOS и Videos/SimRoki на Windows.
+- Автоматическая походка около 1 м/с с остановкой и повторным стартом, высокий шаг и наклон корпуса. Настроенная начальная стойка встроена как стандартная.
+- Мяч массой 100 г стартует в 10 м. Чёрный радиус показывает вращение. Коэффициенты мяча 0,06 и его поверхности 4,05 перемножаются (эффективно 0,243); сцепление ног откалибровано отдельно.
+- ROBOFEST: дистанция 100 м, результат и средняя оценка человечности походки. Бег допускается; низкая поза и опора не на стопы учитываются как нарушения. Оценка — эвристика соревнований, а не научная мера сходства с человеком.
+- Все три панели сворачиваются. Верхние кнопки выровнены; кнопка записи доступна и при открытой правой панели.
 
-- Wide standing pose; both knees bend in the same anatomical direction.
-- Five-link dynamics, impact/relabeling and constrained offline gait optimization using SimRoki's own parameters.
-- State-phased motor control: the reference advances faster as the body moves faster.
-- Forward torso lean, contact-driven leg changes and startup from rest. Fast-mode braking takes about 12–15 seconds before the double-support stop.
-- New fast profile: native tests measured approximately 0.97–0.99 m/s, 27 cm steps, 5.5 cm foot lift and 14° forward lean. Nominal planner speed is not actual speed.
-- Independent collapse/expand buttons for both panels; Robot mode has no solid background.
-- Native RABBIT button and API with nominal profiles from 0.3 to 1.0 m/s.
-- Primary RABBIT references, model derivation, reproducible validation and numerical return-map analysis included.
-- Cross-platform contact math and IK use deterministic library functions; startup clears the standing servo integral, with gains recalibrated for this physics mode.
+## Проверки
 
-Downloads:
-- **Windows x64:** extract `SimRoki-windows-x64.zip` and run `Start-SimRoki.cmd`.
-- **macOS 14+ / Apple Silicon:** extract `SimRoki-macos-arm64.zip` and open `SimRoki.app`.
-- SHA-256 checksum files accompany both archives.
+Физика работает с фиксированным шагом 120 Гц без пропусков. Сравниваются полные состояния при 15/30/60/120 FPS и задержках кадров. Слабый компьютер может обновлять изображение реже или отставать от реального времени; для одинакового результата нужны одинаковые команды на одинаковых шагах симуляции.
 
-Neither Rust nor Python is required for the desktop app. Python is optional for the SDK and offline planner. Press **S** to stop and **R** to reset; use **RABBIT planned walk** for the slow profile or **Start automatic walk ~1 m/s** for the fast profile. See `docs/walking-controller.md` for controls and speed API examples.
+Перед публикацией CI запускает тесты на Windows x64 и macOS ARM64, проверяет упакованные библиотеки и сравнивает 180 контрольных состояний единого сценария старта, остановки и повторного старта между платформами. Тесты также покрывают десять циклов ходьбы/остановки, разные задержки запуска, положения мяча, длительные повторные удары и запись звука с паузами.
 
-Validation includes release-mode Rust tests on both platforms and a smoke test of each packaged native library. The macOS native window was also exercised locally. Windows interactive graphics were not manually tested. Builds are not Developer-ID/code-signing certified or notarized.
+## Скачать
 
-Known limits: flat-ground forward walking at 120 Hz; actual step length and speed depend on the contact model and startup state. Immediate startup can converge to a shorter-step gait. Numerical point-foot stability is not a hardware or Rapier stability guarantee.
+- **Windows x64:** распакуйте `SimRoki-windows-x64.zip`, запустите `Start-SimRoki.cmd`.
+- **macOS 14+ / Apple Silicon:** распакуйте `SimRoki-macos-arm64.zip`, откройте `SimRoki.app`.
+- Для архивов приложены SHA-256. Rust и Python для приложения не нужны.
+
+Сборки не подписаны сертификатом разработчика и не нотарифицированы. Интерактивное окно проверено на macOS; Windows проверяется сборкой, тестами и smoke-тестом библиотеки. Модель рассчитана на ровную поверхность; устойчивость симуляции не гарантирует устойчивость физического робота.

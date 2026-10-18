@@ -107,6 +107,7 @@ Notes:
 
 - the config is the startup source of truth
 - the desktop app has a `Save config` button to write the current runtime config back to `robot_config.toml`
+- the calibrated `robot_config.toml` is also embedded at build time as the standard configuration, including the initial stance and servo gains. Launching without an external config uses these same tuned values.
 - `Use current pose as zero` updates the runtime servo zeros, and those zeros are used by the sliders
 
 ## Desktop app features
@@ -332,3 +333,76 @@ release executables. Music starts paused and is independent of walking controls.
 
 Automatic walking is regression-tested for ten consecutive 60-second walks, each
 followed by a complete stop and five seconds at rest, without resetting the robot.
+
+The ball now starts exactly **10 m ahead**. In automatic walking, the robot times
+a bounded extra swing-leg torque pulse to strike on the move, without commanding
+a slowdown. Assistance is limited to one swing per approach and rearms after
+separation, preventing repeated boosts while chasing the ball. Ground support
+excludes contact with the ball.
+
+The robot-scene ball has a physical mass of **0.1 kg (100 g)**, configurable with
+`robot.ball_mass_kg` in `robot_config.toml`. Its black radius follows the physics
+body angle, making rotation and sliding visible. Contact friction remains enabled.
+
+**Start ROBOFEST 2026 (100 m)** at the top of the right panel resets the course
+and starts automatic walking without requiring motion JSON. The timer freezes
+when the robot crosses 100 m; ball crossing is recorded, and the robot brakes
+after finishing. Press the same button for a fresh attempt. Ball friction is
+0.06; ball/surface friction is 4.05 (`physics.ball_ground_friction`).
+Ball contact coefficients multiply, giving an effective coefficient of 0.243.
+Foot/surface friction remains calibrated at 1.35, independently of the ball.
+
+### Gait quality in ROBOFEST
+
+The collapsible **Mean gait** HUD shows the whole-attempt score (0–100),
+walking/running classification, and eligibility, even with both panels collapsed.
+The evaluator runs at the physics timestep; pausing does not add samples. The
+race stores the score at finish. Its competition heuristics are not a scientific
+measure of human resemblance; this five-link model has no arms.
+
+The score combines duration-weighted posture (40 points), alternating landings
+(30), and duration-weighted foot-only support (30). Torso lean up to 35 degrees
+and hip height above 65% of leg length receive full posture credit. Flight is
+allowed: alternating-foot running is eligible and receives no flight penalty.
+At least eight landings are required to qualify. The bottom 10% of each shin is
+the allowed contact region; contact with the ball is excluded from ground support.
+
+Persistent non-foot support (0.15 s continuously or 0.5 s total), crawling
+(hip below 45% leg length or torso beyond 70 degrees for 0.5 s), fewer than 60%
+alternating transitions after eight landings, external suspension, or moving
+above 0.2 m/s for 3 s without a landing invalidates the attempt. Invalidity stays
+latched and the score is capped at 49, so later upright motion cannot erase a
+violation. ROBOFEST stops the attempt and displays the reason. The thresholds
+are simulator rules, not official ROBOFEST regulations. Changes to robot anatomy
+require revalidation of the contact-region rules.
+
+Music playback switches the scene background instantly at the **20 user-marked
+boundaries** in `assets/audio/why-not-boundaries.json`: original background →
+cyan neon → orange neon → random neon accents without consecutive repeats.
+The random sequence is selected once per application launch and retained during
+pauses and track loops. Only the background, grid, and floor glow change; the
+robot and ball retain their original rendering and physics. The first cut is at 37.007 s. The irregular 4/16-second gaps
+are preserved exactly, without inferred extra cuts or snapping to a beat grid.
+Timing follows audio playback, not simulation time. Pausing freezes the color;
+resuming continues at the same position; looping restarts the cue sheet. There
+is no fade. Loop length is measured from decoded samples to avoid accumulating
+MP3 metadata timing error.
+
+### MP4 recording
+
+The red recording button in the lower-right corner starts recording the simulator window.
+Click it again to finish and save an H.264/AAC MP4 in `~/Movies/SimRoki`
+(`%USERPROFILE%/Videos/SimRoki` on Windows). The application's music is included
+with its current playback position, volume, pauses and looping; no microphone or
+other applications are captured. Recording uses FFmpeg, available on PATH or in
+`/opt/homebrew/bin` or `/usr/local/bin` on macOS. Video is limited to 1920 pixels
+wide at 30 fps. Stop recording and wait for `Saved:` before closing the app.
+
+### Repeatable simulation
+
+Physics and control advance at a fixed 120 Hz; render frames never change the
+integration step. The regression suite compares the complete state every simulated
+second at 15, 30, 60 and 120 render FPS and with frame stalls up to half a second.
+A slow computer may display fewer frames or lag behind real time, but physics
+steps are not dropped. Identical results require identical configuration and
+commands at the same simulation steps; wall-clock mouse clicks are not a replay.

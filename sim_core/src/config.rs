@@ -18,6 +18,9 @@ pub struct PhysicsConfig {
     pub dt: f32,
     pub ground_half_width: f32,
     pub ground_friction: f32,
+    /// Optional ball/surface material pair, independent of foot/surface calibration.
+    #[serde(default)]
+    pub ball_ground_friction: Option<f32>,
     pub ground_restitution: f32,
 }
 
@@ -29,8 +32,12 @@ pub struct RobotConfig {
     pub body_dynamics: BodyDynamicsConfig,
     pub suspend_clearance: f32,
     pub ball_spawn_offset_x_m: f32,
+    #[serde(default = "default_ball_mass_kg")]
+    pub ball_mass_kg: f32,
     pub initial_pose: InitialPoseConfig,
 }
+
+fn default_ball_mass_kg() -> f32 { 0.1 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkConfig {
@@ -192,98 +199,10 @@ impl Default for RlConfig {
 
 impl Default for SimulationConfig {
     fn default() -> Self {
-        Self {
-            physics: PhysicsConfig {
-                gravity_y: -9.81,
-                dt: 1.0 / 120.0,
-                ground_half_width: 5_000.0,
-                ground_friction: 1.35,
-                ground_restitution: 0.0,
-            },
-            robot: RobotConfig {
-                torso: LinkConfig {
-                    length: 0.68,
-                    width: 0.09,
-                    mass: 0.318_240_02,
-                    friction: 1.0,
-                },
-                thigh: LinkConfig {
-                    length: 0.46,
-                    width: 0.09,
-                    mass: 0.140_760_02,
-                    friction: 1.0,
-                },
-                shin: LinkConfig {
-                    length: 0.50,
-                    width: 0.09,
-                    mass: 0.126,
-                    friction: 1.2,
-                },
-                body_dynamics: BodyDynamicsConfig {
-                    angular_damping: 0.85,
-                    linear_damping: 0.08,
-                },
-                suspend_clearance: 0.8,
-                ball_spawn_offset_x_m: 12.0,
-                initial_pose: InitialPoseConfig {
-                    torso: BodyPoseConfig {
-                        x: 0.0,
-                        y: 1.205,
-                        angle: 0.0,
-                    },
-                    left_thigh: BodyPoseConfig {
-                        x: 0.014,
-                        y: 0.62,
-                        angle: 0.05,
-                    },
-                    left_shin: BodyPoseConfig {
-                        x: -0.11,
-                        y: 0.19,
-                        angle: -0.82,
-                    },
-                    right_thigh: BodyPoseConfig {
-                        x: -0.014,
-                        y: 0.62,
-                        angle: -0.05,
-                    },
-                    right_shin: BodyPoseConfig {
-                        x: 0.11,
-                        y: 0.19,
-                        angle: 0.82,
-                    },
-                },
-            },
-            servo: ServoConfig {
-                kp: 20.0,
-                ki: 0.0,
-                kd: 0.0,
-                max_torque: 2.55,
-                max_speed_deg_s: 439.0,
-                integral_limit: 10.0,
-                voltage_min_v: 6.0,
-                voltage_max_v: 15.0,
-                nominal_voltage_v: 12.0,
-                stall_current_a: 3.0,
-                no_load_current_a: 0.2,
-                encoder_bits: 14,
-                weight_kg: 0.046,
-                gear_ratio: 330.0,
-                zero_offsets: JointAnglesConfig {
-                    right_hip: -0.05,
-                    right_knee: 0.87,
-                    left_hip: 0.05,
-                    left_knee: -0.87,
-                },
-                initial_targets: JointAnglesConfig {
-                    right_hip: -0.05,
-                    right_knee: 0.87,
-                    left_hip: 0.05,
-                    left_knee: -0.87,
-                },
-            },
-            walk: WalkConfig::default(),
-            rl: RlConfig::default(),
-        }
+        // Ship the same calibrated pose and dynamics as the repository config.
+        // Finder and standalone releases may have no config in their working directory.
+        toml::from_str(include_str!("../../robot_config.toml"))
+            .expect("embedded tuned robot configuration must be valid")
     }
 }
 
@@ -307,5 +226,20 @@ impl SimulationConfig {
         let text = toml::to_string_pretty(self)
             .map_err(|err| format!("failed to serialize config '{}': {err}", path.display()))?;
         fs::write(path, text).map_err(|err| format!("failed to write config '{}': {err}", path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tuned_default_tests {
+    use super::*;
+
+    #[test]
+    fn built_in_default_matches_tuned_configuration() {
+        let tuned: SimulationConfig = toml::from_str(include_str!("../../robot_config.toml")).unwrap();
+        assert_eq!(
+            toml::to_string(&SimulationConfig::default()).unwrap(),
+            toml::to_string(&tuned).unwrap(),
+            "standalone launch must preserve the tuned pose and physics"
+        );
     }
 }

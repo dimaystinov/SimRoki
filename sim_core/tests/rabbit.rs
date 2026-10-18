@@ -129,11 +129,14 @@ fn phase_advances_faster_when_body_moves_faster() {
 #[test]
 fn changing_nominal_speed_keeps_contacts_and_motor_limits() {
     use sim_core::Simulation;
-    let c = SimulationConfig::load_from_file(concat!(
+    let mut c = SimulationConfig::load_from_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../robot_config.toml"
     ))
     .unwrap();
+    // This regression measures unobstructed gait transitions. Ball contact
+    // is exercised separately by moving_kick_keeps_speed_and_balance_across_ball_positions.
+    c.robot.ball_spawn_offset_x_m = 1000.0;
     let mut sim = Simulation::from_config(c);
     sim.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json"))
         .unwrap();
@@ -160,11 +163,14 @@ fn changing_nominal_speed_keeps_contacts_and_motor_limits() {
 fn higher_faster_orbit_increases_actual_speed_and_foot_lift() {
     use sim_core::Simulation;
     for settle in [120, 600, 1200] {
-        let c = SimulationConfig::load_from_file(concat!(
+        let mut c = SimulationConfig::load_from_file(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../robot_config.toml"
         ))
         .unwrap();
+        // This regression measures unobstructed gait transitions. Ball contact
+        // is exercised separately by moving_kick_keeps_speed_and_balance_across_ball_positions.
+        c.robot.ball_spawn_offset_x_m = 1000.0;
         let mut sim = Simulation::from_config(c);
         for _ in 0..settle {
             sim.step_fixed();
@@ -309,5 +315,61 @@ fn automatic_walk_starts_after_arbitrary_ui_delay() {
             assert!(s.walk_enabled && b.y>1.25 && b.angle.abs()<0.35,"settle={settle} frame={frame} height={} angle={} status={}",b.y,b.angle,s.planned_status);
         }
         assert!(sim.state().base.unwrap().x>25.0,"must make forward progress");
+    }
+}
+
+
+#[test]
+fn moving_kick_keeps_speed_and_balance_across_ball_positions() {
+    use sim_core::Simulation;
+    for distance in [9.5, 9.8, 10.0, 10.2, 10.5] {
+        for settle in [0, 3, 60] {
+            let mut c=SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+            c.robot.ball_spawn_offset_x_m=distance;
+            let mut sim=Simulation::from_config(c);
+            for _ in 0..settle {sim.step_fixed();}
+            sim.start_automatic_walk().unwrap();
+            let mut peak_ball_speed=0.0_f32;
+            let mut cruise_x=0.0;
+            let mut previous=sim.state();
+            for frame in 0..14400 {
+                sim.step_fixed();let s=sim.state();let b=s.base.as_ref().unwrap();let ball=s.ball.as_ref().unwrap();
+                assert!(s.walk_enabled && b.y>1.25 && b.angle.abs()<0.35,
+                    "kick fell: distance={distance} settle={settle} frame={frame} base={b:?}");
+                assert!((s.walk_target_speed-1.0).abs()<1e-6, "must not command braking for a kick");
+                assert!(s.joints.values().all(|j| j.torque.abs()<=2.55001));
+                assert!((b.x-previous.base.as_ref().unwrap().x).abs()<0.05, "robot position jump");
+                assert!((ball.x-previous.ball.as_ref().unwrap().x).abs()<0.05, "ball position jump");
+                peak_ball_speed=peak_ball_speed.max(ball.vx);
+                if frame==10800 {cruise_x=b.x;}
+                previous=s;
+            }
+            let s=sim.state();let b=s.base.unwrap();let ball=s.ball.unwrap();
+            let speed=(b.x-cruise_x)/30.0;
+            assert!(peak_ball_speed>1.3,"weak strike: {peak_ball_speed}");
+            assert!(ball.x>distance+10.0,"ball must be kicked forward");
+            assert!(speed>0.90,"must continue near walking speed: {speed}");
+            println!("kick distance={distance} settle={settle}: ball_peak={peak_ball_speed:.3} m/s walking={speed:.3} m/s");
+        }
+    }
+}
+
+#[test]
+fn repeated_ball_encounters_do_not_accumulate_kick_acceleration() {
+    use sim_core::Simulation;
+    for settle in [2, 45] {
+        let c=SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+        let mut sim=Simulation::from_config(c);
+        for _ in 0..settle {sim.step_fixed();}
+        sim.start_automatic_walk().unwrap();
+        let mut peak=0.0_f32;
+        for frame in 0..72000 {
+            sim.step_fixed();let s=sim.state();let b=s.base.unwrap();
+            assert!(s.walk_enabled && b.y>1.25 && b.angle.abs()<0.35,
+                "repeated kick fell: settle={settle} frame={frame} base={b:?}");
+            assert_eq!(s.walk_target_speed,1.0);
+            peak=peak.max(s.ball.unwrap().vx);
+        }
+        assert!(peak>1.3);
     }
 }

@@ -1,3 +1,4 @@
+mod recording;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -49,6 +50,7 @@ struct MusicPlayer {
     _stream: OutputStream,
     sink: Sink,
     duration: Duration,
+    themes: Vec<usize>,
 }
 
 impl MusicPlayer {
@@ -56,18 +58,88 @@ impl MusicPlayer {
         let (stream, handle) = OutputStream::try_default()?;
         let sink = Sink::try_new(&handle)?;
         let duration = queue_music(&sink)?;
-        Ok(Self { _stream: stream, sink, duration })
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+        let themes = neon_sequence(seed, music_boundaries().len()+1);
+        Ok(Self { _stream: stream, sink, duration, themes })
     }
 }
 
 const MUSIC_BYTES: &[u8] = include_bytes!("../../assets/audio/why-not.mp3");
 
 fn queue_music(sink: &Sink) -> anyhow::Result<Duration> {
-    let duration = Decoder::new(Cursor::new(MUSIC_BYTES))?.total_duration().unwrap_or_default();
+    // Count decoded frames so the palette stays aligned over repeated MP3 loops.
+    let decoder = Decoder::new(Cursor::new(MUSIC_BYTES))?;
+    let samples_per_second = decoder.sample_rate() as f64 * decoder.channels() as f64;
+    let duration = Duration::from_secs_f64(decoder.count() as f64 / samples_per_second);
     sink.pause();
     sink.set_volume(0.5);
     sink.append(Decoder::new_looped(Cursor::new(MUSIC_BYTES))?);
     Ok(duration)
+}
+
+// Exact manual annotations, not a regular metrical grid. The playback clock
+// preserves the selected color on pause and replays the cue sheet on each loop.
+fn music_boundaries() -> &'static [Duration] {
+    #[derive(Deserialize)]
+    struct CueSheet { boundaries_seconds: Vec<f64> }
+    static CUES: std::sync::OnceLock<Vec<Duration>> = std::sync::OnceLock::new();
+    CUES.get_or_init(|| {
+        let sheet: CueSheet = serde_json::from_str(include_str!("../../assets/audio/why-not-boundaries.json"))
+            .expect("valid bundled music cue sheet");
+        assert!(sheet.boundaries_seconds.iter().all(|t| t.is_finite() && *t >= 0.0));
+        assert!(sheet.boundaries_seconds.windows(2).all(|w| w[0] < w[1]));
+        sheet.boundaries_seconds.into_iter().map(Duration::from_secs_f64).collect()
+    })
+}
+
+fn music_background_index(position: Duration, duration: Duration) -> usize {
+    if duration.is_zero() { return 0; }
+    let track_nanos = position.as_nanos() % duration.as_nanos();
+    music_boundaries().partition_point(|cue| cue.as_nanos() <= track_nanos)
+}
+
+fn neon_sequence(seed: u64, count: usize) -> Vec<usize> {
+    let mut rng = seed.max(1);
+    let mut result = Vec::with_capacity(count);
+    for i in 0..count {
+        let theme = if i < 3 { i } else {
+            rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+            let previous = result[i-1];
+            let options: Vec<_> = (1..=7).filter(|n| *n != previous).collect();
+            options[rng as usize % options.len()]
+        };
+        result.push(theme);
+    }
+    result
+}
+
+fn music_neon(music: Option<&MusicPlayer>) -> Option<Color> {
+    let player = music?;
+    let stage = music_background_index(player.sink.get_pos(), player.duration);
+    Some(match player.themes[stage] {
+        0 => return None,
+        1 => color_u8!(35, 220, 255, 255),
+        2 => color_u8!(255, 130, 35, 255),
+        3 => color_u8!(65, 100, 255, 255),
+        4 => color_u8!(177, 92, 255, 255),
+        5 => color_u8!(255, 77, 183, 255),
+        6 => color_u8!(22, 243, 185, 255),
+        _ => color_u8!(244, 215, 163, 255),
+    })
+}
+
+fn tint(color: Color, alpha: f32) -> Color { Color::new(color.r, color.g, color.b, alpha) }
+
+fn draw_neon_background(view: &ViewState) {
+    if let Some(color) = view.neon {
+        clear_background(color_u8!(5, 9, 19, 255));
+        let horizon = world_to_screen(vec2(view.focus.x, GROUND_Y), view).y;
+        // Static glow: only cue crossings change the palette, never frame timing.
+        for i in (1..=36).rev() {
+            let height = i as f32 * 8.0;
+            draw_rectangle(0.0, horizon-height, screen_width(), height*2.0, tint(color,0.009));
+        }
+    } else { clear_background(color_u8!(244, 241, 234, 255)); }
 }
 
 struct AppFonts {
@@ -92,6 +164,7 @@ struct OkResponse {
 
 #[derive(Debug, Clone)]
 struct ViewState {
+    neon: Option<Color>,
     zoom: f32,
     zoom_target: f32,
     focus: Vec2,
@@ -104,6 +177,7 @@ struct ViewState {
 #[derive(Debug, Clone)]
 struct ControlPanelState {
     collapsed: bool,
+    gait_hud_collapsed: bool,
     walk_error: Option<String>,
     right_hip: f32,
     right_knee: f32,
@@ -124,6 +198,7 @@ struct ControlPanelState {
     motion_loop: bool,
     motion_repeat_delay_ms: f32,
     robofest_active: bool,
+    robofest_gait_quality: Option<sim_core::GaitQualityReport>,
     robofest_start_time: f32,
     robofest_elapsed_time: f32,
     robofest_finish_x: Option<f32>,
@@ -183,6 +258,7 @@ async fn main() {
         cyrillic: load_ttf_font("C:/Windows/Fonts/arial.ttf").await.ok(),
     };
     let mut view = ViewState {
+        neon: None,
         zoom: 1.0,
         zoom_target: 1.0,
         focus: vec2(0.0, 0.85),
@@ -193,15 +269,17 @@ async fn main() {
     };
     let mut music = MusicPlayer::new().map_err(|error| warn!("Music unavailable: {error}")).ok();
     let mut controls = ControlPanelState::default();
+    let mut recorder = recording::Recorder::default();
     spawn_api_server(sim.clone(), external_control.clone());
 
     loop {
-        clear_background(color_u8!(244, 241, 234, 255));
+        view.neon = music_neon(music.as_ref());
+        draw_neon_background(&view);
         handle_keyboard(&sim);
         update_view(&mut view, &sim);
         update_robofest_state(&sim, &mut controls);
         draw_world(&sim, &view, &controls, &fonts);
-        draw_control_panel(&sim, &external_control, &mut controls, &mut music);
+        draw_control_panel(&sim, &external_control, &mut controls, &mut music, view.neon.is_some());
         let allow_frame_stepping = !external_control_active(&external_control);
         if allow_frame_stepping {
             if let Ok(mut sim) = sim.lock() {
@@ -210,6 +288,14 @@ async fn main() {
         } else if let Ok(sim) = sim.lock() {
             let _ = sim.state();
         }
+        // Draw last so the score remains visible above either expanded panel.
+        draw_gait_quality_hud(&sim, &mut controls, view.neon.is_some());
+        let audio = music.as_ref().map(|p| recording::AudioState {
+            playing: !p.sink.is_paused(),
+            position: p.sink.get_pos().as_secs_f64() % p.duration.as_secs_f64(),
+            volume: p.sink.volume(),
+        }).unwrap_or(recording::AudioState { playing: false, position: 0.0, volume: 0.0 });
+        recorder.frame(audio, view.neon.is_some());
         next_frame().await;
     }
 }
@@ -559,6 +645,28 @@ fn normalize_wheel_delta(raw_wheel: f32) -> f32 {
     }
 }
 
+fn draw_gait_quality_hud(sim: &SharedSimulation, controls: &mut ControlPanelState, neon: bool) {
+    let Ok(sim) = sim.lock() else { return; };
+    let state = sim.state();
+    if state.scene != SceneKind::Robot { return; }
+    let toggle = Rect::new(12.0, screen_height()-66.0, 32.0, 32.0);
+    if is_mouse_button_pressed(MouseButton::Left)
+        && toggle.contains(vec2(mouse_position().0, mouse_position().1))
+    {
+        controls.gait_hud_collapsed = !controls.gait_hud_collapsed;
+    }
+    draw_panel_toggle(toggle, controls.gait_hud_collapsed,
+        if controls.gait_hud_collapsed { "Show gait score" } else { "Hide gait score" }, neon);
+    if controls.gait_hud_collapsed { return; }
+    let report = controls.robofest_gait_quality.as_ref().unwrap_or(&state.gait_quality);
+    let label = format!("Mean gait: {:.1}/100 | {} | {}", report.score, report.locomotion, report.status);
+    let color = if report.reason.is_some() { RED } else { color_u8!(30, 103, 77, 255) };
+    draw_rectangle(56.0, screen_height()-74.0, 580.0_f32.min((screen_width()-68.0).max(0.0)), 64.0, Color::new(1.0,0.98,0.94,0.94));
+    draw_text(&label, 66.0, screen_height()-46.0, 24.0, color);
+    let detail = report.reason.clone().unwrap_or_else(|| format!("Whole attempt | landings: {} | alternating: {:.0}% | flight allowed", report.landings, report.alternation*100.0));
+    draw_text(&detail, 66.0, screen_height()-22.0, 18.0, color);
+}
+
 fn draw_world(
     sim: &SharedSimulation,
     view: &ViewState,
@@ -588,15 +696,16 @@ fn draw_control_panel(
     external_control: &SharedExternalControl,
     controls: &mut ControlPanelState,
     music: &mut Option<MusicPlayer>,
+    neon: bool,
 ) {
-    let toggle = Rect::new((screen_width() - PANEL_MARGIN - 32.0).max(64.0), PANEL_MARGIN, 32.0, 32.0);
+    let toggle = Rect::new((screen_width() - PANEL_MARGIN - 32.0).max(64.0), OVERLAY_TOGGLE.y, 32.0, 32.0);
     if is_mouse_button_pressed(MouseButton::Left)
         && toggle.contains(vec2(mouse_position().0, mouse_position().1))
     {
         controls.collapsed = !controls.collapsed;
     }
     draw_panel_toggle(toggle, !controls.collapsed,
-        if controls.collapsed { "Show controls" } else { "Hide controls" });
+        if controls.collapsed { "Show controls" } else { "Hide controls" }, neon);
     if controls.collapsed {
         return;
     }
@@ -623,9 +732,9 @@ fn draw_control_panel(
     let mut suspend_changed = false;
     let available_width = (screen_width() - PANEL_MARGIN * 2.0).max(PANEL_MIN_WIDTH);
     let panel_width = PANEL_WIDTH.min(available_width).max(PANEL_MIN_WIDTH.min(available_width));
-    let panel_height = (screen_height() - PANEL_MARGIN * 2.0 - 40.0).max(180.0);
+    let panel_y = OVERLAY_TOGGLE.y + OVERLAY_TOGGLE.h + 8.0;
+    let panel_height = (screen_height() - panel_y - 80.0).max(180.0);
     let panel_x = (screen_width() - panel_width - PANEL_MARGIN).max(PANEL_MARGIN);
-    let panel_y = PANEL_MARGIN + 40.0;
     widgets::Window::new(
         hash!("servo-panel"),
         vec2(panel_x, panel_y),
@@ -646,6 +755,9 @@ fn draw_control_panel(
             ui.label(None, "Music unavailable: no audio output");
         }
         ui.separator();
+        if ui.button(None, "Start ROBOFEST 2026 (100 m)") {
+            controls.walk_error = start_robofest(sim, controls).err();
+        }
         let stopping = state.planned_status == "stopping";
         let walking = state.walk_enabled && !stopping;
         if ui.button(None, if walking { "Stop automatic walk" } else { "Start automatic walk ~1 m/s" }) {
@@ -743,30 +855,6 @@ fn draw_control_panel(
                         loop_enabled: controls.motion_loop,
                         repeat_delay_ms: controls.motion_repeat_delay_ms,
                     });
-                }
-            }
-        }
-        if ui.button(None, "Start ROBOFEST 2026") {
-            if apply_motion_json_to_frames(controls).is_ok() && !controls.motion_frames.is_empty() {
-                if let Ok(mut sim) = sim.lock() {
-                    sim.reset_robot();
-                    sim.resume();
-                    sim.clear_gait();
-                    sim.set_motion_sequence_deg(MotionSequenceCommand {
-                        frames: controls.motion_frames.clone(),
-                        loop_enabled: false,
-                        repeat_delay_ms: 0.0,
-                    });
-                    let fresh_state = sim.state();
-                    let start_x = fresh_state.base.as_ref().map(|base| base.x).unwrap_or(0.0);
-                    controls.robofest_active = true;
-                    controls.robofest_start_time = fresh_state.time;
-                    controls.robofest_elapsed_time = 0.0;
-                    controls.robofest_finish_x = Some(start_x + 100.0);
-                    controls.robofest_robot_reached = false;
-                    controls.robofest_ball_reached = false;
-                    controls.robofest_result_message = None;
-                    controls.sync_from_state(&fresh_state);
                 }
             }
         }
@@ -987,7 +1075,25 @@ fn apply_controls(sim: &SharedSimulation, controls: &ControlPanelState) {
     }
 }
 
+fn start_robofest(sim: &SharedSimulation, controls: &mut ControlPanelState) -> Result<(), String> {
+    let mut sim = sim.lock().map_err(|_| "Simulation unavailable".to_owned())?;
+    sim.reset_robot();
+    sim.start_automatic_walk()?;
+    let state = sim.state();
+    controls.robofest_active = true;
+    controls.robofest_gait_quality = Some(state.gait_quality.clone());
+    controls.robofest_start_time = state.time;
+    controls.robofest_elapsed_time = 0.0;
+    controls.robofest_finish_x = Some(state.base.as_ref().unwrap().x + 100.0);
+    controls.robofest_robot_reached = false;
+    controls.robofest_ball_reached = false;
+    controls.robofest_result_message = None;
+    controls.sync_from_state(&state);
+    Ok(())
+}
+
 fn update_robofest_state(sim: &SharedSimulation, controls: &mut ControlPanelState) {
+    if !controls.robofest_active { return; }
     let state = {
         let Ok(sim) = sim.lock() else {
             return;
@@ -1000,20 +1106,34 @@ fn update_robofest_state(sim: &SharedSimulation, controls: &mut ControlPanelStat
     };
 
     controls.robofest_elapsed_time = (state.time - controls.robofest_start_time).max(0.0);
-    controls.robofest_robot_reached = state.base.as_ref().map(|base| base.x >= finish_x).unwrap_or(false);
-    controls.robofest_ball_reached = state.ball.as_ref().map(|ball| ball.x >= finish_x).unwrap_or(false);
+    controls.robofest_gait_quality = Some(state.gait_quality.clone());
+    if let Some(reason) = &state.gait_quality.reason {
+        controls.robofest_active = false;
+        controls.robofest_result_message = Some(format!("Invalid gait: {reason}"));
+        if let Ok(mut sim) = sim.lock() { sim.set_directional_walk_enabled(false); }
+        return;
+    }
+
+    controls.robofest_robot_reached |= state.base.as_ref().map(|base| base.x >= finish_x).unwrap_or(false);
+    controls.robofest_ball_reached |= state.ball.as_ref().map(|ball| ball.x >= finish_x).unwrap_or(false);
 
     if controls.robofest_active && controls.robofest_robot_reached {
         controls.robofest_active = false;
         let ball_status = if controls.robofest_ball_reached {
-            "мяч: да (+10 баллов)"
+            "ball: yes (+10 points)"
         } else {
-            "мяч: нет (+0 баллов)"
+            "ball: no (+0 points)"
         };
         controls.robofest_result_message = Some(format!(
-            "Поздравляем! Время: {:.2} с | {ball_status}",
+            "{} Time: {:.2} s | {ball_status}",
+            if state.gait_quality.eligible { "Finished!" } else { "Unqualified gait." },
             controls.robofest_elapsed_time
         ));
+        if let Ok(mut sim) = sim.lock() { sim.set_directional_walk_enabled(false); }
+    } else if state.base.as_ref().is_some_and(|b| b.y < 1.0 || b.angle.abs() > 0.7)
+        || !state.walk_enabled || state.planned_status == "stopping" {
+        controls.robofest_active = false;
+        controls.robofest_result_message = Some(format!("Attempt stopped at {:.2} s", controls.robofest_elapsed_time));
     }
 }
 
@@ -1072,7 +1192,9 @@ fn draw_grid(view: &ViewState) {
         let world_x = x as f32 * GRID_MINOR_STEP_WORLD;
         let is_axis = x == 0;
         let is_major = x.rem_euclid(GRID_MAJOR_EVERY) == 0;
-        let color = if is_axis {
+        let color = if let Some(neon) = view.neon {
+            tint(neon, if is_axis {0.6} else if is_major {0.23} else {0.08})
+        } else if is_axis {
             color_u8!(176, 150, 112, 255)
         } else if is_major {
             color_u8!(210, 204, 193, 255)
@@ -1101,7 +1223,7 @@ fn draw_grid(view: &ViewState) {
                 a.x + 4.0,
                 screen_height() - 8.0,
                 16.0,
-                color_u8!(120, 112, 99, 255),
+                if view.neon.is_some() {color_u8!(150, 171, 197, 255)} else {color_u8!(120, 112, 99, 255)},
             );
         }
     }
@@ -1112,7 +1234,9 @@ fn draw_grid(view: &ViewState) {
         let world_y = y as f32 * GRID_MINOR_STEP_WORLD;
         let is_axis = y == 0;
         let is_major = y.rem_euclid(GRID_MAJOR_EVERY) == 0;
-        let color = if is_axis {
+        let color = if let Some(neon) = view.neon {
+            tint(neon, if is_axis {0.6} else if is_major {0.23} else {0.08})
+        } else if is_axis {
             color_u8!(176, 150, 112, 255)
         } else if is_major {
             color_u8!(210, 204, 193, 255)
@@ -1141,20 +1265,25 @@ fn draw_grid(view: &ViewState) {
                 8.0,
                 a.y - 4.0,
                 16.0,
-                color_u8!(120, 112, 99, 255),
+                if view.neon.is_some() {color_u8!(150, 171, 197, 255)} else {color_u8!(120, 112, 99, 255)},
             );
         }
     }
 
     let ground_a = world_to_screen(vec2(left - 4.0, GROUND_Y), view);
     let ground_b = world_to_screen(vec2(right + 4.0, GROUND_Y), view);
+    if let Some(neon) = view.neon {
+        for (width, alpha) in [(35.0,0.04),(20.0,0.08),(10.0,0.16)] {
+            draw_line(ground_a.x, ground_a.y, ground_b.x, ground_b.y, width, tint(neon,alpha));
+        }
+    }
     draw_line(
         ground_a.x,
         ground_a.y,
         ground_b.x,
         ground_b.y,
         5.0,
-        color_u8!(106, 84, 60, 255),
+        view.neon.unwrap_or(color_u8!(106, 84, 60, 255)),
     );
 }
 
@@ -1196,6 +1325,14 @@ fn draw_ball_body(ball: &sim_core::BodyState, radius_m: f32, view: &ViewState) {
         2.0,
         color_u8!(130, 55, 45, 255),
     );
+    // Use the rigid body's angle so sliding remains visible rather than
+    // synthesizing rotation from horizontal travel.
+    let rim = world_to_screen(
+        vec2(ball.x + radius_m * ball.angle.cos(), ball.y + radius_m * ball.angle.sin()),
+        view,
+    );
+    draw_line(center.x, center.y, rim.x, rim.y, (3.0 * view.zoom).max(2.0), BLACK);
+    draw_circle(center.x, center.y, (3.0 * view.zoom).max(2.0), BLACK);
 }
 
 fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &ViewState) {
@@ -1245,7 +1382,7 @@ fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &Vie
                 text_x,
                 screen.y - 10.0,
                 18.0,
-                color_u8!(34, 40, 49, 255),
+                if view.neon.is_some() {color_u8!(214, 226, 245, 255)} else {color_u8!(34, 40, 49, 255)},
             );
         }
     }
@@ -1268,9 +1405,9 @@ fn draw_robot_scene(sim: &SharedSimulation, _state: &SimulationState, view: &Vie
     }
 }
 
-fn draw_panel_toggle(button: Rect, points_right: bool, tooltip: &str) {
+fn draw_panel_toggle(button: Rect, points_right: bool, tooltip: &str, neon: bool) {
     let hovered = button.contains(vec2(mouse_position().0, mouse_position().1));
-    let ink = color_u8!(57, 62, 70, 255);
+    let ink = if neon {color_u8!(194, 213, 236, 255)} else {color_u8!(57, 62, 70, 255)};
     if hovered {
         draw_rectangle(button.x, button.y, button.w, button.h, Color::new(0.2, 0.25, 0.3, 0.10));
     }
@@ -1294,15 +1431,15 @@ fn draw_overlay(
     fonts: &AppFonts,
 ) {
     draw_panel_toggle(OVERLAY_TOGGLE, view.overlay_collapsed,
-        if view.overlay_collapsed { "Show info" } else { "Hide info" });
+        if view.overlay_collapsed { "Show info" } else { "Hide info" }, view.neon.is_some());
     if !view.overlay_collapsed {
         let title = match state.scene {
             SceneKind::Robot => "Robot mode",
             SceneKind::Ball => "Ball smoke-test",
         };
-        draw_text(title, 68.0, 55.0, 32.0, color_u8!(34, 40, 49, 255));
-        draw_text(&format!("time: {:.2}s", state.time), 40.0, 92.0, 24.0, color_u8!(57, 62, 70, 255));
-        draw_text(&format!("mode: {}", state.mode), 40.0, 120.0, 24.0, color_u8!(57, 62, 70, 255));
+        draw_text(title, 68.0, 55.0, 32.0, if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(34, 40, 49, 255)});
+        draw_text(&format!("time: {:.2}s", state.time), 40.0, 92.0, 24.0, if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(57, 62, 70, 255)});
+        draw_text(&format!("mode: {}", state.mode), 40.0, 120.0, 24.0, if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(57, 62, 70, 255)});
         draw_text(
             &format!(
                 "walk: {} {}  {:.2}/{:.2} m/s",
@@ -1314,7 +1451,7 @@ fn draw_overlay(
             40.0,
             148.0,
             24.0,
-            color_u8!(57, 62, 70, 255),
+            if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(57, 62, 70, 255)},
         );
 
         if let Some(base) = &state.base {
@@ -1326,7 +1463,7 @@ fn draw_overlay(
             );
             draw_text(
                 &format!("Actual speed: {:+.2} m/s | {}", base.vx, state.walk_support_state),
-                40.0, 202.0, 20.0, color_u8!(57, 62, 70, 255),
+                40.0, 202.0, 20.0, if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(57, 62, 70, 255)},
             );
         }
         let mut y = 230.0;
@@ -1341,7 +1478,7 @@ fn draw_overlay(
                     40.0,
                     y,
                     22.0,
-                    color_u8!(50, 61, 79, 255),
+                    if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(50, 61, 79, 255)},
                 );
                 y += 24.0;
             }
@@ -1352,7 +1489,7 @@ fn draw_overlay(
             40.0,
             y + 8.0,
             22.0,
-            color_u8!(50, 61, 79, 255),
+            if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(50, 61, 79, 255)},
         );
         y += 40.0;
         draw_text(
@@ -1360,7 +1497,7 @@ fn draw_overlay(
             40.0,
             y + 8.0,
             20.0,
-            color_u8!(70, 78, 90, 255),
+            if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(70, 78, 90, 255)},
         );
         draw_text(
             if view.follow_robot {
@@ -1371,7 +1508,7 @@ fn draw_overlay(
             40.0,
             y + 28.0,
             18.0,
-            color_u8!(103, 110, 121, 255),
+            if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(103, 110, 121, 255)},
         );
 
         let status_y = y + 58.0;
@@ -1386,7 +1523,7 @@ fn draw_overlay(
                 40.0,
                 status_y,
                 20.0,
-                color_u8!(57, 62, 70, 255),
+                if view.neon.is_some() {color_u8!(194, 213, 236, 255)} else {color_u8!(57, 62, 70, 255)},
             );
         }
 
@@ -1416,7 +1553,7 @@ fn draw_overlay(
             fonts.cyrillic.as_ref(),
         );
         draw_text_with_optional_font(
-            "Нажмите Start для новой попытки",
+            "Press Start ROBOFEST for a new attempt",
             x + 20.0,
             y + 112.0,
             22,
@@ -1465,6 +1602,7 @@ impl Default for ControlPanelState {
     fn default() -> Self {
         Self {
             collapsed: false,
+            gait_hud_collapsed: false,
             walk_error: None,
             right_hip: 0.0,
             right_knee: 0.0,
@@ -1485,6 +1623,7 @@ impl Default for ControlPanelState {
             motion_loop: false,
             motion_repeat_delay_ms: 0.0,
             robofest_active: false,
+            robofest_gait_quality: None,
             robofest_start_time: 0.0,
             robofest_elapsed_time: 0.0,
             robofest_finish_x: None,
@@ -1577,11 +1716,86 @@ mod music_tests {
     }
 
     #[test]
+    fn background_follows_every_manual_boundary_and_loops_exactly() {
+        let duration = Duration::from_secs_f64(165.04);
+        let cues = music_boundaries();
+        assert_eq!(cues.len(), 20);
+        assert_eq!(cues[0], Duration::from_millis(37007));
+        assert_eq!(cues[19], Duration::from_millis(160868));
+        for (i, cue) in cues.iter().enumerate() {
+            for cycle in 0..3 {
+                let at = duration * cycle + *cue;
+                assert_eq!(music_background_index(at-Duration::from_nanos(1), duration), i);
+                assert_eq!(music_background_index(at, duration), i+1);
+            }
+        }
+        assert_eq!(music_background_index(Duration::from_secs(8), duration), 0);
+        assert_eq!(music_background_index(Duration::from_secs(80), duration), 9);
+        assert_eq!(music_background_index(duration, duration), 0);
+        assert_eq!(music_background_index(Duration::ZERO, Duration::ZERO), 0);
+        let decoder = Decoder::new(Cursor::new(MUSIC_BYTES)).unwrap();
+        let rate = decoder.sample_rate() as f64 * decoder.channels() as f64;
+        let actual_duration = Duration::from_secs_f64(decoder.count() as f64 / rate);
+        assert!(*cues.last().unwrap() < actual_duration);
+    }
+
+    #[test]
+    fn neon_sequence_starts_default_cyan_orange_then_varies_without_repeats() {
+        for seed in 1..100 {
+            let sequence=neon_sequence(seed,21);
+            assert_eq!(&sequence[..3], &[0,1,2]);
+            assert!(sequence[3..].iter().all(|n| (1..=7).contains(n)));
+            assert!(sequence.windows(2).all(|w| w[0]!=w[1]));
+            assert_eq!(sequence,neon_sequence(seed,21));
+        }
+        assert_ne!(neon_sequence(1,21),neon_sequence(2,21));
+    }
+
+    #[test]
     fn bundled_music_loops_back_to_its_beginning() {
         let sample_count = Decoder::new(Cursor::new(MUSIC_BYTES)).unwrap().count();
         let beginning: Vec<_> = Decoder::new(Cursor::new(MUSIC_BYTES)).unwrap().take(4096).collect();
         let mut looped = Decoder::new_looped(Cursor::new(MUSIC_BYTES)).unwrap();
         for _ in 0..sample_count { looped.next().unwrap(); }
         assert_eq!(looped.take(4096).collect::<Vec<_>>(), beginning);
+    }
+}
+
+#[cfg(test)]
+mod robofest_tests {
+    use super::*;
+
+    #[test]
+    fn automatic_race_finishes_without_motion_json_and_freezes_result() {
+        let config = SimulationConfig::load_from_file(concat!(env!("CARGO_MANIFEST_DIR"), "/../robot_config.toml")).unwrap();
+        let sim = Arc::new(Mutex::new(Simulation::from_config(config)));
+        let mut controls = ControlPanelState::default();
+        controls.motion_frames.clear();
+        controls.motion_json = "invalid JSON is irrelevant to racing".into();
+        start_robofest(&sim, &mut controls).unwrap();
+        assert!(sim.lock().unwrap().state().walk_enabled);
+        for _ in 0..24000 {
+            sim.lock().unwrap().step_fixed();
+            update_robofest_state(&sim, &mut controls);
+            if !controls.robofest_active { break; }
+        }
+        assert!(controls.robofest_robot_reached, "{:?}", controls.robofest_result_message);
+        assert!(controls.robofest_ball_reached);
+        let gait = controls.robofest_gait_quality.as_ref().unwrap();
+        assert!(gait.eligible && gait.score > 85.0, "{gait:?}");
+        println!("ROBOFEST mean gait: {gait:?}");
+        let score = gait.score;
+        let elapsed = controls.robofest_elapsed_time;
+        for _ in 0..2400 {
+            sim.lock().unwrap().step_fixed();
+            update_robofest_state(&sim, &mut controls);
+        }
+        assert_eq!(controls.robofest_elapsed_time, elapsed);
+        assert_eq!(controls.robofest_gait_quality.as_ref().unwrap().score, score);
+        start_robofest(&sim, &mut controls).unwrap();
+        assert!(controls.robofest_active);
+        assert!(!controls.robofest_robot_reached && !controls.robofest_ball_reached);
+        assert!(controls.robofest_result_message.is_none());
+        assert_eq!(controls.robofest_elapsed_time, 0.0);
     }
 }

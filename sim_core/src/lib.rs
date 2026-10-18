@@ -1,5 +1,7 @@
 mod config;
 mod ffi;
+mod gait_quality;
+pub use gait_quality::GaitQualityReport;
 mod kinematics;
 pub mod rabbit;
 
@@ -23,7 +25,6 @@ const GROUP_TORSO: Group = Group::GROUP_4;
 const GROUP_BALL: Group = Group::GROUP_5;
 const GROUP_ENVIRONMENT: Group = Group::GROUP_6;
 const ROBOT_BALL_RADIUS_M: f32 = 0.2;
-const ROBOT_BALL_MASS_KG: f32 = 0.1;
 const ROBOT_BALL_CLEARANCE_Y_M: f32 = 0.02;
 const GROUND_Y: f32 = 0.0;
 
@@ -109,6 +110,7 @@ pub struct ContactState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationState {
+    pub gait_quality: GaitQualityReport,
     pub time: f32,
     pub mode: String,
     pub scene: SceneKind,
@@ -390,6 +392,8 @@ struct RabbitRuntime {
     stopping: bool,
     elapsed: f32,
     steps: u64,
+    // One powered swing per approach; rearm only after the ball separates.
+    kick_step: Option<u64>,
 }
 
 pub struct Simulation {
@@ -432,6 +436,7 @@ pub struct Simulation {
     rl_target_direction: f32,
     directional_walk_enabled: bool,
     rabbit_runtime: Option<RabbitRuntime>,
+    gait_quality: gait_quality::GaitQuality,
     walk_target_speed: f32,
     walk_speed: f32,
     walk_measured_speed: f32,
@@ -552,6 +557,7 @@ impl Simulation {
             rl_target_direction: 1.0,
             directional_walk_enabled: false,
             rabbit_runtime: None,
+            gait_quality: gait_quality::GaitQuality::default(),
             walk_target_speed: config.walk.nominal_speed_mps.min(config.walk.max_speed_mps),
             walk_speed: 0.0,
             walk_measured_speed: 0.0,
@@ -584,18 +590,25 @@ impl Simulation {
                 .translation(vector![0.0, -0.1])
                 .build(),
         );
-        self.colliders.insert_with_parent(
-            ColliderBuilder::cuboid(self.config.physics.ground_half_width, 0.1)
-                .collision_groups(InteractionGroups::new(
-                    GROUP_GROUND,
-                    all_robot_groups() | GROUP_BALL | GROUP_ENVIRONMENT,
-                ))
-                .friction(self.config.physics.ground_friction)
-                .restitution(self.config.physics.ground_restitution)
-                .build(),
-            ground,
-            &mut self.bodies,
-        );
+        // Disjoint collision filters give the same surface independently tuned
+        // foot and ball materials, without duplicate contacts on either object.
+        let pairs = if let Some(ball_friction) = self.config.physics.ball_ground_friction {
+            vec![(all_robot_groups() | GROUP_ENVIRONMENT, self.config.physics.ground_friction),
+                 (GROUP_BALL, ball_friction)]
+        } else {
+            vec![(all_robot_groups() | GROUP_BALL | GROUP_ENVIRONMENT, self.config.physics.ground_friction)]
+        };
+        for (filter, friction) in pairs {
+            self.colliders.insert_with_parent(
+                ColliderBuilder::cuboid(self.config.physics.ground_half_width, 0.1)
+                    .collision_groups(InteractionGroups::new(GROUP_GROUND, filter))
+                    .friction(friction)
+                    .restitution(self.config.physics.ground_restitution)
+                    .build(),
+                ground,
+                &mut self.bodies,
+            );
+        }
     }
 
     fn spawn_ball(&mut self, translation: Vector<Real>, radius: f32, mass: f32) {
@@ -618,7 +631,8 @@ impl Simulation {
                 all_robot_groups() | GROUP_GROUND | GROUP_BALL | GROUP_ENVIRONMENT,
             ))
             .density(density)
-            .friction(0.01)
+            .friction(0.06)
+            .friction_combine_rule(CoefficientCombineRule::Multiply)
             .restitution(0.95)
             .build();
         self.colliders
@@ -628,31 +642,14 @@ impl Simulation {
 
     fn spawn_robot_ball(&mut self) {
         let translation = self.robot_ball_translation();
-        self.spawn_ball(translation, ROBOT_BALL_RADIUS_M, ROBOT_BALL_MASS_KG);
+        self.spawn_ball(translation, ROBOT_BALL_RADIUS_M, self.config.robot.ball_mass_kg);
     }
 
     fn robot_ball_translation(&self) -> Vector<Real> {
         let pose = &self.config.robot.initial_pose;
-        let rightmost_x = pose
-            .torso
-            .x
-            .max(pose.left_thigh.x)
-            .max(pose.left_shin.x)
-            .max(pose.right_thigh.x)
-            .max(pose.right_shin.x);
-        let leftmost_x = pose
-            .torso
-            .x
-            .min(pose.left_thigh.x)
-            .min(pose.left_shin.x)
-            .min(pose.right_thigh.x)
-            .min(pose.right_shin.x);
+        // Measure the distance from the robot's start, not the leading limb.
         let ball_offset_x = self.config.robot.ball_spawn_offset_x_m.max(ROBOT_BALL_RADIUS_M + 0.05);
-        let ball_x = if self.rl_target_direction >= 0.0 {
-            rightmost_x + ball_offset_x
-        } else {
-            leftmost_x - ball_offset_x
-        };
+        let ball_x = pose.torso.x + self.rl_target_direction.signum() * ball_offset_x;
         let ball_y = ROBOT_BALL_RADIUS_M + ROBOT_BALL_CLEARANCE_Y_M;
         vector![ball_x, ball_y]
     }
@@ -1257,7 +1254,7 @@ impl Simulation {
     pub fn set_directional_walk_enabled(&mut self, enabled: bool) {
         if enabled {if let Some(runtime)=self.rabbit_runtime.as_mut() {
             if !self.directional_walk_enabled {
-                runtime.elapsed=0.0;runtime.preparing=true;runtime.starting=true;runtime.steps=0;
+                runtime.elapsed=0.0;runtime.preparing=true;runtime.starting=true;runtime.steps=0;runtime.kick_step=None;
                 runtime.trajectory=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json")).expect("validated startup gait");
                 self.walk_speed=0.0;
             }
@@ -1424,6 +1421,7 @@ impl Simulation {
             &(),
         );
 
+        self.update_gait_quality();
         self.time += self.dt();
     }
 
@@ -1539,7 +1537,7 @@ impl Simulation {
             .map(|(l,r)|l[0]>r[0]).unwrap_or(true);
         self.gait=None;self.motion_sequence=None;self.rl_residual_enabled=false;
         self.set_directional_walk_enabled(true);
-        self.rabbit_runtime=Some(RabbitRuntime{model,trajectory:startup,goal:Some(trajectory),stance_left,starting:true,preparing:false,stopping:false,elapsed:0.0,steps:0});
+        self.rabbit_runtime=Some(RabbitRuntime{model,trajectory:startup,goal:Some(trajectory),stance_left,starting:true,preparing:false,stopping:false,elapsed:0.0,steps:0,kick_step:None});
         Ok(())
     }
 
@@ -1694,9 +1692,27 @@ impl Simulation {
             else if runtime.trajectory.speed_mps<=0.60001 {0.0}
             else {((runtime.trajectory.speed_mps-0.6)/0.4).clamp(0.0,1.0)};
         let (fast_kp,fast_kd)=(400.0,15.0);
-        let Some(torques)=runtime.model.control(&q,&v,&runtime.trajectory,100.0+(fast_kp-100.0)*fast_blend,20.0+(fast_kd-20.0)*fast_blend) else {
+        let Some(mut torques)=runtime.model.control(&q,&v,&runtime.trajectory,100.0+(fast_kp-100.0)*fast_blend,20.0+(fast_kd-20.0)*fast_blend) else {
             self.directional_walk_enabled=false;return false;
         };
+        // Add one motor-driven swing per approach while the opposite foot is grounded.
+        // Repeated boosts while chasing a nearby rolling ball accumulate forward
+        // speed and destabilize touchdown. Separation rearms the next approach.
+        // The ball receives momentum only through Rapier collision response.
+        if let Some(ball)=self.ball_body_state() {
+            let gap=ball.x-torso.translation().x;
+            let phase=runtime.model.phase(&q,&runtime.trajectory);
+            if gap>0.9 {runtime.kick_step=None;}
+            let kick_available=runtime.kick_step.is_none() || runtime.kick_step==Some(runtime.steps);
+            if kick_available && !runtime.stopping && gap>0.05 && gap<0.45 && ball.vx<1.8 && ball.y<0.45 && torso.rotation().angle().abs()<0.32 && torso.angvel().abs()<1.5 && self.foot_contact(runtime.stance_left) {
+                let pulse=libm::sin(std::f64::consts::PI*((phase-0.35)/0.60).clamp(0.0,1.0)).max(0.0);
+                if pulse>0.0 {runtime.kick_step=Some(runtime.steps);}
+                let gain=0.10;
+                torques[2]+=gain*pulse;
+                torques[0]-=gain*pulse;
+                torques[3]+=gain*1.6666667*pulse;
+            }
+        }
         let names=if runtime.stance_left {[JointName::LeftHip,JointName::LeftKnee,JointName::RightHip,JointName::RightKnee]}
             else{[JointName::RightHip,JointName::RightKnee,JointName::LeftHip,JointName::LeftKnee]};
         let phase=runtime.model.phase(&q,&runtime.trajectory);
@@ -1818,6 +1834,7 @@ impl Simulation {
         }
 
         SimulationState {
+            gait_quality: self.gait_quality.report(),
             time: self.time,
             mode: if self.paused { "paused" } else { "running" }.to_owned(),
             scene: self.scene,
@@ -2895,6 +2912,36 @@ impl Simulation {
         Some(child.angvel() - parent.angvel())
     }
 
+    fn update_gait_quality(&mut self) {
+        let Some(robot) = self.robot.as_ref() else { return; };
+        let mut feet = [false; 2];
+        let mut forbidden = false;
+        for handle in [robot.torso, robot.left_thigh, robot.right_thigh, robot.left_shin, robot.right_shin] {
+            for collider in self.bodies[handle].colliders() {
+                for pair in self.narrow_phase.contact_pairs_with(*collider) {
+                    let first = pair.collider1 == *collider;
+                    let other = if first {pair.collider2} else {pair.collider1};
+                    if !pair.has_any_active_contact || !self.colliders[other].collision_groups().memberships.intersects(GROUP_GROUND) { continue; }
+                    let side = if handle == robot.left_shin {Some(0)} else if handle == robot.right_shin {Some(1)} else {None};
+                    for manifold in &pair.manifolds {
+                        for contact in &manifold.points {
+                            if contact.dist > 0.005 { continue; }
+                            let point = if first {contact.local_p1} else {contact.local_p2};
+                            if let Some(side) = side {
+                                if point.y <= -0.4 * self.config.robot.shin.length { feet[side] = true; }
+                                else { forbidden = true; }
+                            } else { forbidden = true; }
+                        }
+                    }
+                }
+            }
+        }
+        let body = &self.bodies[robot.torso];
+        let hip = body.position() * point![0.0, -self.config.robot.torso.length * 0.5];
+        let height = hip.y / (self.config.robot.thigh.length + self.config.robot.shin.length).max(0.01);
+        self.gait_quality.sample(self.dt(), body.rotation().angle(), height, body.linvel().x, feet, forbidden, self.robot_suspended);
+    }
+
     fn foot_contact(&self, left: bool) -> bool {
         let Some(robot) = &self.robot else {
             return false;
@@ -2906,7 +2953,10 @@ impl Simulation {
         };
         self.narrow_phase
             .contact_pairs_with(collider)
-            .any(|pair| pair.has_any_active_contact)
+            .any(|pair| {
+                let other = if pair.collider1 == collider { pair.collider2 } else { pair.collider1 };
+                pair.has_any_active_contact && self.colliders[other].collision_groups().memberships.intersects(GROUP_GROUND)
+            })
     }
 
     fn current_targets(&self) -> ServoTargets {
@@ -3171,4 +3221,44 @@ fn normalize_angle(angle: f32) -> f32 {
 
 fn clamp_joint_target(_joint: JointName, angle: f32) -> f32 {
     angle.clamp(-std::f32::consts::PI, std::f32::consts::PI)
+}
+
+#[cfg(test)]
+mod ball_mass_tests {
+    use super::*;
+
+    #[test]
+    fn ball_and_feet_have_independent_surface_materials() {
+        let sim = Simulation::from_config(SimulationConfig::default());
+        let grounds: Vec<_> = sim.colliders.iter().map(|(_,c)|c)
+            .filter(|c|c.collision_groups().memberships == GROUP_GROUND).collect();
+        assert_eq!(grounds.len(), 2);
+        let ball_ground=grounds.iter().find(|c|c.collision_groups().filter.intersects(GROUP_BALL)).unwrap();
+        let feet_ground=grounds.iter().find(|c|c.collision_groups().filter.intersects(all_robot_groups())).unwrap();
+        assert!(!ball_ground.collision_groups().filter.intersects(all_robot_groups()));
+        assert!(!feet_ground.collision_groups().filter.intersects(GROUP_BALL));
+        assert!((feet_ground.friction()-1.35).abs()<1e-6);
+        let ball=&sim.colliders[sim.bodies[sim.ball.unwrap()].colliders()[0]];
+        assert_eq!(ball.friction_combine_rule(), CoefficientCombineRule::Multiply);
+        assert!((ball.friction()*ball_ground.friction()-0.243).abs()<1e-6);
+    }
+
+    #[test]
+    fn configured_ball_mass_is_used_by_physics() {
+        for mass in [0.1, 0.43] {
+            let mut config = SimulationConfig::default();
+            config.robot.ball_mass_kg = mass;
+            let sim = Simulation::from_config(config);
+            let body = &sim.bodies[sim.ball.unwrap()];
+            assert!((body.mass() - mass).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn old_config_keeps_one_hundred_gram_ball() {
+        let mut config = serde_json::to_value(SimulationConfig::default()).unwrap();
+        config["robot"].as_object_mut().unwrap().remove("ball_mass_kg");
+        let config: SimulationConfig = serde_json::from_value(config).unwrap();
+        assert_eq!(config.robot.ball_mass_kg, 0.1);
+    }
 }
