@@ -1,5 +1,11 @@
 # Five Link Robot Simulator
 
+## Roboscience · Хакатон
+
+[Описание задания и регламент «SimRoki: 100 метров с мячом» (PDF)](docs/SimRoki-Roboscience-regulations.pdf)
+
+Итоговый регламент: правила участия, оценивание, бонус KNP и размеры модели.
+
 ## Windows download
 
 Download `SimRoki-windows-x64.zip` from [Releases](https://github.com/dimaystinov/SimRoki/releases/latest),
