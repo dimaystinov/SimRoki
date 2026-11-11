@@ -1,0 +1,130 @@
+[physics]
+gravity_y = -9.8100004196167
+dt = 0.008333333767950535
+ground_half_width = 5000.0
+ground_friction = 1.350000023841858
+ball_ground_friction = 4.050000071525574
+ground_restitution = 0.0
+
+[robot]
+suspend_clearance = 1.2849290370941162
+ball_spawn_offset_x_m = 10.0
+ball_mass_kg = 0.1
+
+[robot.torso]
+length = 0.6800000071525574
+width = 0.09000000357627869
+mass = 0.3182400166988373
+friction = 1.0
+
+[robot.thigh]
+length = 0.46000000834465027
+width = 0.09000000357627869
+mass = 0.14076001942157745
+friction = 1.0
+
+[robot.shin]
+length = 0.5
+width = 0.09000000357627869
+mass = 0.12600000202655792
+friction = 1.2000000476837158
+
+[robot.body_dynamics]
+angular_damping = 0.8500000238418579
+linear_damping = 0.07999999821186066
+
+[robot.initial_pose.torso]
+x = 0.000000000
+y = 1.295772462
+angle = 0.000000000
+
+[robot.initial_pose.left_thigh]
+x = 0.058950106
+y = 0.733455380
+angle = 0.259197361
+
+[robot.initial_pose.left_shin]
+x = 0.115900661
+y = 0.261146294
+angle = -0.007998286
+
+[robot.initial_pose.right_thigh]
+x = -0.000930607
+y = 0.725774345
+angle = -0.004046128
+
+[robot.initial_pose.right_shin]
+x = -0.068843218
+y = 0.254916494
+angle = -0.271241775
+
+[servo]
+kp = 19.878977610249162
+ki = 1.759163164428341
+kd = 0.2613179059608189
+max_torque = 2.55
+max_speed_deg_s = 439.0
+integral_limit = 10.0
+voltage_min_v = 6.0
+voltage_max_v = 15.0
+nominal_voltage_v = 12.0
+stall_current_a = 3.0
+no_load_current_a = 0.2
+encoder_bits = 14
+weight_kg = 0.046
+gear_ratio = 330.0
+
+[servo.zero_offsets]
+right_hip = -0.004046128
+right_knee = -0.267195647
+left_hip = 0.259197361
+left_knee = -0.267195647
+
+[servo.initial_targets]
+right_hip = -0.004046128
+right_knee = -0.267195647
+left_hip = 0.259197361
+left_knee = -0.267195647
+
+[walk]
+nominal_speed_mps = 0.25
+max_speed_mps = 0.2514582309250547
+max_accel_mps2 = 0.2
+cycle_frequency_hz = 0.8119911756839466
+max_cycle_frequency_hz = 1.4
+nominal_step_length_m = 0.23266180333989023
+step_length_gain = 0.0346398544014077
+nominal_step_height_m = 0.04866156919264722
+run_step_height_m = 0.06571483953748049
+stance_duty_factor = 0.6808187080734119
+torso_pitch_kp = 1.1255612943524393
+torso_pitch_kd = 0.36157829675298814
+hip_upright_gain = 0.7051103281770614
+hip_upright_damping = 0.16780273669780765
+torso_upright_limit_rad = 0.04150688842985308
+torso_forward_lean_per_speed = 0.12975014204919796
+torso_forward_lean_max_rad = 0.19803985427273924
+velocity_kp = 0.9333004180722697
+pelvis_height_target_m = 0.9687575192547226
+stance_foot_spread_m = 0.0200461213281438
+foot_separation_min_m = 0.14526550567630964
+kick_trigger_distance_m = 1.2
+kick_forward_impulse_ns = 0.0
+kick_upward_impulse_ns = 0.0
+recovery_height_threshold_m = 0.5799999833106995
+recovery_angle_threshold_rad = 1.0
+
+[rl]
+control_substeps = 4
+episode_timeout_s = 20.0
+torso_min_height = 0.30000001192092896
+torso_max_tilt_rad = 1.25
+action_limit_deg = 180.0
+reward_forward_weight = 3.0
+reward_alive_bonus = 0.05
+reward_upright_weight = 0.45
+reward_height_weight = 0.25
+reward_contact_weight = 0.10
+reward_ball_forward_weight = 2.0
+penalty_torque_weight = 0.0035
+penalty_action_delta_weight = 0.0040

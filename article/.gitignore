@@ -1,0 +1,8 @@
+/article.pdf
+*.aux
+*.log
+*.out
+*.xdv
+*.synctex.gz
+__pycache__/
+*.pyc

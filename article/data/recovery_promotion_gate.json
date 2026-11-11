@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "accepted": true,
+  "reasons": [],
+  "cases": 101,
+  "incumbent": {
+    "score": -116.3348284352629,
+    "mean_return": 45.48150594596596,
+    "cvar25_return": -495.33455942405146,
+    "constraint_penalty": 37.98269452521599,
+    "constraints": {
+      "finish_shortfall": 0.11683168316831682,
+      "contact_excess": 0.04091588409993693
+    },
+    "feasible": false,
+    "finishers": 69,
+    "cases": 101,
+    "finish_rate": 0.6831683168316832,
+    "mean_distance_m": 72.33896665869207,
+    "wrong_contact_fraction": 0.04591588409993693,
+    "mean_finish_s": 43.63370913043478,
+    "fall_events": 29,
+    "recoveries": 0,
+    "recovery_failures": 29
+  },
+  "candidate": {
+    "score": 120.50994082084917,
+    "mean_return": 176.40314714279214,
+    "cvar25_return": -134.45284604715917,
+    "constraint_penalty": 22.27999481015318,
+    "constraints": {
+      "finish_shortfall": 0,
+      "contact_excess": 0.04455998962030636
+    },
+    "feasible": false,
+    "finishers": 91,
+    "cases": 101,
+    "finish_rate": 0.900990099009901,
+    "mean_distance_m": 91.75234176580496,
+    "wrong_contact_fraction": 0.04955998962030636,
+    "mean_finish_s": 45.232952208791204,
+    "fall_events": 34,
+    "recoveries": 28,
+    "recovery_failures": 6
+  },
+  "by_kind": {
+    "angle": {
+      "lost_finishes": 0,
+      "gained_finishes": 12,
+      "incumbent": {
+        "score": -298.27209208721916,
+        "mean_return": -109.48214658907087,
+        "cvar25_return": -483.1677257600908,
+        "constraint_penalty": 67.99801405812559,
+        "constraints": {
+          "finish_shortfall": 0.32000000000000006,
+          "contact_excess": 0.03999602811625118
+        },
+        "feasible": false,
+        "finishers": 12,
+        "cases": 25,
+        "finish_rate": 0.48,
+        "mean_distance_m": 54.079545410348004,
+        "wrong_contact_fraction": 0.044996028116251176,
+        "mean_finish_s": 43.76700983333333,
+        "fall_events": 13,
+        "recoveries": 0,
+        "recovery_failures": 13
+      },
+      "candidate": {
+        "score": 159.66040429078475,
+        "mean_return": 183.2658790175491,
+        "cvar25_return": 6.873304394180399,
+        "constraint_penalty": 25.323800825309473,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.05064760165061895
+        },
+        "feasible": false,
+        "finishers": 24,
+        "cases": 25,
+        "finish_rate": 0.96,
+        "mean_distance_m": 96.5820222052,
+        "wrong_contact_fraction": 0.055647601650618946,
+        "mean_finish_s": 46.89957795833333,
+        "fall_events": 16,
+        "recoveries": 15,
+        "recovery_failures": 1
+      }
+    },
+    "combined": {
+      "lost_finishes": 0,
+      "gained_finishes": 5,
+      "incumbent": {
+        "score": -9.732944988697533,
+        "mean_return": 107.79544717073409,
+        "cvar25_return": -366.52638831915556,
+        "constraint_penalty": 25.896795079642736,
+        "constraints": {
+          "finish_shortfall": 0.040000000000000036,
+          "contact_excess": 0.039793590159285464
+        },
+        "feasible": false,
+        "finishers": 19,
+        "cases": 25,
+        "finish_rate": 0.76,
+        "mean_distance_m": 79.051236411368,
+        "wrong_contact_fraction": 0.04479359015928546,
+        "mean_finish_s": 43.93714394736842,
+        "fall_events": 6,
+        "recoveries": 0,
+        "recovery_failures": 6
+      },
+      "candidate": {
+        "score": 228.40801135724155,
+        "mean_return": 231.8212691088547,
+        "cvar25_return": 76.42297574556088,
+        "constraint_penalty": 22.519001688003353,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.045038003376006705
+        },
+        "feasible": false,
+        "finishers": 24,
+        "cases": 25,
+        "finish_rate": 0.96,
+        "mean_distance_m": 96.599179260692,
+        "wrong_contact_fraction": 0.0500380033760067,
+        "mean_finish_s": 45.51658279166667,
+        "fall_events": 7,
+        "recoveries": 6,
+        "recovery_failures": 1
+      }
+    },
+    "nominal": {
+      "lost_finishes": 0,
+      "gained_finishes": 0,
+      "incumbent": {
+        "score": 314.2787438639165,
+        "mean_return": 273.9633627969685,
+        "cvar25_return": 273.9633627969685,
+        "constraint_penalty": 28.175459632294164,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.05635091926458833
+        },
+        "feasible": false,
+        "finishers": 1,
+        "cases": 1,
+        "finish_rate": 1.0,
+        "mean_distance_m": 100.0,
+        "wrong_contact_fraction": 0.06135091926458833,
+        "mean_finish_s": 41.700848,
+        "fall_events": 0,
+        "recoveries": 0,
+        "recovery_failures": 0
+      },
+      "candidate": {
+        "score": 314.2787438639165,
+        "mean_return": 273.9633627969685,
+        "cvar25_return": 273.9633627969685,
+        "constraint_penalty": 28.175459632294164,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.05635091926458833
+        },
+        "feasible": false,
+        "finishers": 1,
+        "cases": 1,
+        "finish_rate": 1.0,
+        "mean_distance_m": 100.0,
+        "wrong_contact_fraction": 0.06135091926458833,
+        "mean_finish_s": 41.700848,
+        "fall_events": 0,
+        "recoveries": 0,
+        "recovery_failures": 0
+      }
+    },
+    "pose": {
+      "lost_finishes": 0,
+      "gained_finishes": 4,
+      "incumbent": {
+        "score": -188.10214894004113,
+        "mean_return": -5.660362182039185,
+        "cvar25_return": -548.0876385994654,
+        "constraint_penalty": 45.41987710813558,
+        "constraints": {
+          "finish_shortfall": 0.16000000000000003,
+          "contact_excess": 0.04283975421627116
+        },
+        "feasible": false,
+        "finishers": 16,
+        "cases": 25,
+        "finish_rate": 0.64,
+        "mean_distance_m": 65.92352824804,
+        "wrong_contact_fraction": 0.04783975421627116,
+        "mean_finish_s": 43.80658375,
+        "fall_events": 6,
+        "recoveries": 0,
+        "recovery_failures": 6
+      },
+      "candidate": {
+        "score": -41.83382238587325,
+        "mean_return": 82.07272254462015,
+        "cvar25_return": -414.0736946593771,
+        "constraint_penalty": 20.38812126564912,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.04077624253129824
+        },
+        "feasible": false,
+        "finishers": 20,
+        "cases": 25,
+        "finish_rate": 0.8,
+        "mean_distance_m": 80.63900109444,
+        "wrong_contact_fraction": 0.045776242531298236,
+        "mean_finish_s": 45.0100398,
+        "fall_events": 7,
+        "recoveries": 6,
+        "recovery_failures": 1
+      }
+    },
+    "push": {
+      "lost_finishes": 0,
+      "gained_finishes": 1,
+      "incumbent": {
+        "score": 125.30312628978773,
+        "mean_return": 180.13381111019967,
+        "cvar25_return": -138.4892142789401,
+        "constraint_penalty": 20.20838125067694,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.04041676250135388
+        },
+        "feasible": false,
+        "finishers": 21,
+        "cases": 25,
+        "finish_rate": 0.84,
+        "mean_distance_m": 89.19511523135999,
+        "wrong_contact_fraction": 0.045416762501353874,
+        "mean_finish_s": 43.24332804761905,
+        "fall_events": 4,
+        "recoveries": 0,
+        "recovery_failures": 4
+      },
+      "candidate": {
+        "score": 171.0752136245648,
+        "mean_return": 204.55030927397758,
+        "cvar25_return": -51.28743512259042,
+        "constraint_penalty": 20.653236868765152,
+        "constraints": {
+          "finish_shortfall": 0,
+          "contact_excess": 0.041306473737530304
+        },
+        "feasible": false,
+        "finishers": 22,
+        "cases": 25,
+        "finish_rate": 0.88,
+        "mean_distance_m": 92.85925817351999,
+        "wrong_contact_fraction": 0.0463064737375303,
+        "mean_finish_s": 43.46859768181818,
+        "fall_events": 4,
+        "recoveries": 1,
+        "recovery_failures": 3
+      }
+    }
+  },
+  "paired_return_gain": 130.9216411968262,
+  "paired_return_gain_lower95": 88.35256045783869,
+  "recovery_only": true,
+  "changed_fields": [
+    "knp_recovery_motion",
+    "recovery_pd"
+  ],
+  "recovered_finishes": 22,
+  "repeat_falls": 5,
+  "first_fall_reduction_claimed": false
+}

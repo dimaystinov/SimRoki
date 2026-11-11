@@ -1,0 +1,4243 @@
+mod config;
+mod ffi;
+mod gait_quality;
+pub use gait_quality::GaitQualityReport;
+mod kinematics;
+pub mod rabbit;
+pub mod running_env;
+pub mod rabbit_recovery;
+
+use nalgebra::{point, vector};
+use rapier2d::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, path::Path};
+
+pub use config::{
+    BodyDynamicsConfig, BodyPoseConfig, InitialPoseConfig, JointAnglesConfig, LinkConfig, PhysicsConfig, RlConfig,
+    RobotConfig, ServoConfig, SimulationConfig, WalkConfig,
+};
+use kinematics::{FiveLinkKinematics, LegSide};
+
+const TORSO_UPRIGHT_KP: f32 = 0.0;
+const TORSO_UPRIGHT_KD: f32 = 0.0;
+const GROUP_GROUND: Group = Group::GROUP_1;
+const GROUP_LEFT_LEG: Group = Group::GROUP_2;
+const GROUP_RIGHT_LEG: Group = Group::GROUP_3;
+const GROUP_TORSO: Group = Group::GROUP_4;
+const GROUP_BALL: Group = Group::GROUP_5;
+const GROUP_ENVIRONMENT: Group = Group::GROUP_6;
+const ROBOT_BALL_RADIUS_M: f32 = 0.2;
+const ROBOT_BALL_CLEARANCE_Y_M: f32 = 0.02;
+const GROUND_Y: f32 = 0.0;
+const RUNNING_POINT_FOOT_RADIUS_M: f32 = 0.006;
+
+fn all_robot_groups() -> Group {
+    GROUP_LEFT_LEG | GROUP_RIGHT_LEG | GROUP_TORSO
+}
+
+fn robot_world_filter() -> Group {
+    GROUP_GROUND | GROUP_BALL | GROUP_ENVIRONMENT
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneKind {
+    Ball,
+    Robot,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum JointName {
+    RightHip,
+    RightKnee,
+    LeftHip,
+    LeftKnee,
+}
+
+impl JointName {
+    pub const ALL: [JointName; 4] = [
+        JointName::RightHip,
+        JointName::RightKnee,
+        JointName::LeftHip,
+        JointName::LeftKnee,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JointName::RightHip => "right_hip",
+            JointName::RightKnee => "right_knee",
+            JointName::LeftHip => "left_hip",
+            JointName::LeftKnee => "left_knee",
+        }
+    }
+}
+
+impl std::str::FromStr for JointName {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "right_hip" => Ok(Self::RightHip),
+            "right_knee" => Ok(Self::RightKnee),
+            "left_hip" => Ok(Self::LeftHip),
+            "left_knee" => Ok(Self::LeftKnee),
+            _ => Err(format!("unknown joint '{value}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BodyState {
+    pub x: f32,
+    pub y: f32,
+    pub angle: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub omega: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JointState {
+    pub angle: f32,
+    pub velocity: f32,
+    pub target: f32,
+    pub torque: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContactState {
+    pub left_foot: bool,
+    pub right_foot: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationState {
+    pub gait_quality: GaitQualityReport,
+    pub time: f32,
+    pub mode: String,
+    pub scene: SceneKind,
+    pub paused: bool,
+    pub base: Option<BodyState>,
+    pub ball: Option<BodyState>,
+    pub joints: BTreeMap<String, JointState>,
+    pub link_masses: BTreeMap<String, f32>,
+    pub link_lengths: BTreeMap<String, f32>,
+    pub servo_zeros: BTreeMap<String, f32>,
+    pub contacts: ContactState,
+    pub walk_direction: f32,
+    pub walk_enabled: bool,
+    pub walk_target_speed: f32,
+    pub walk_controller: String,
+    pub planned_steps: u64,
+    pub planned_status: String,
+    pub planned_phase: Option<f64>,
+    pub planned_stance_left: Option<bool>,
+    pub rabbit_teacher_torque_norm: Option<[f32; 4]>,
+    pub rabbit_reference_mix: f32,
+    pub rabbit_running_target_pitch_rad: Option<f64>,
+    pub planned_orbit_speed_mps: Option<f64>,
+    pub walk_speed: f32,
+    pub walk_support_state: String,
+    pub walk_state_time: f32,
+    pub left_foot: Option<[f32; 2]>,
+    pub right_foot: Option<[f32; 2]>,
+    pub walk_left_anchor: [f32; 2],
+    pub walk_right_anchor: [f32; 2],
+    pub walk_left_touchdown_x: f32,
+    pub walk_right_touchdown_x: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RlObservation {
+    pub values: Vec<f32>,
+    pub names: Vec<String>,
+    pub action_order: Vec<String>,
+    pub torso_height: f32,
+    pub torso_angle: f32,
+    pub base_x: f32,
+    pub target_direction: f32,
+    pub center_of_mass: Option<[f32; 2]>,
+    pub contacts: ContactState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RlRewardBreakdown {
+    pub forward_progress: f32,
+    pub ball_progress: f32,
+    pub alive_bonus: f32,
+    pub upright_bonus: f32,
+    pub height_bonus: f32,
+    pub contact_bonus: f32,
+    pub torque_penalty: f32,
+    pub action_delta_penalty: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RlStepResult {
+    pub observation: RlObservation,
+    pub reward: f32,
+    pub done: bool,
+    pub truncated: bool,
+    pub episode_time: f32,
+    pub breakdown: RlRewardBreakdown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RlStepCommand {
+    pub action_deg: [f32; 4],
+    #[serde(default)]
+    pub repeat_steps: Option<u32>,
+    #[serde(default)]
+    pub direction: Option<f32>,
+    #[serde(default)]
+    pub residual: Option<bool>,
+    #[serde(default)]
+    pub walk_enabled: Option<bool>,
+    #[serde(default)]
+    pub walk_speed_mps: Option<f32>,
+}
+
+/// State of one RL action, shared by offline and paced desktop execution.
+#[derive(Debug)]
+pub struct PendingRlStep {
+    pub repeat_steps: u32,
+    pub dt: f32,
+    executed_steps: u32,
+    bounded: [f32; 4],
+    base_x_before: f32,
+    ball_x_before: f32,
+    action_delta_penalty: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RlResetCommand {
+    #[serde(default)]
+    pub direction: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalkDirectionCommand {
+    pub direction: f32,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub speed_mps: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WalkConfigCommand {
+    #[serde(default)]
+    pub nominal_speed_mps: Option<f32>,
+    #[serde(default)]
+    pub max_speed_mps: Option<f32>,
+    #[serde(default)]
+    pub max_accel_mps2: Option<f32>,
+    #[serde(default)]
+    pub cycle_frequency_hz: Option<f32>,
+    #[serde(default)]
+    pub max_cycle_frequency_hz: Option<f32>,
+    #[serde(default)]
+    pub nominal_step_length_m: Option<f32>,
+    #[serde(default)]
+    pub step_length_gain: Option<f32>,
+    #[serde(default)]
+    pub nominal_step_height_m: Option<f32>,
+    #[serde(default)]
+    pub run_step_height_m: Option<f32>,
+    #[serde(default)]
+    pub stance_duty_factor: Option<f32>,
+    #[serde(default)]
+    pub torso_pitch_kp: Option<f32>,
+    #[serde(default)]
+    pub torso_pitch_kd: Option<f32>,
+    #[serde(default)]
+    pub hip_upright_gain: Option<f32>,
+    #[serde(default)]
+    pub hip_upright_damping: Option<f32>,
+    #[serde(default)]
+    pub torso_upright_limit_rad: Option<f32>,
+    #[serde(default)]
+    pub torso_forward_lean_per_speed: Option<f32>,
+    #[serde(default)]
+    pub torso_forward_lean_max_rad: Option<f32>,
+    #[serde(default)]
+    pub velocity_kp: Option<f32>,
+    #[serde(default)]
+    pub pelvis_height_target_m: Option<f32>,
+    #[serde(default)]
+    pub stance_foot_spread_m: Option<f32>,
+    #[serde(default)]
+    pub foot_separation_min_m: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServoTargets {
+    pub right_hip: Option<f32>,
+    pub right_knee: Option<f32>,
+    pub left_hip: Option<f32>,
+    pub left_knee: Option<f32>,
+}
+
+impl ServoTargets {
+    pub fn get(&self, joint: JointName) -> Option<f32> {
+        match joint {
+            JointName::RightHip => self.right_hip,
+            JointName::RightKnee => self.right_knee,
+            JointName::LeftHip => self.left_hip,
+            JointName::LeftKnee => self.left_knee,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JointCommand {
+    pub joint: JointName,
+    pub angle: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PoseCommand {
+    pub base: Option<PoseBase>,
+    pub joints: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PoseBase {
+    pub x: f32,
+    pub y: f32,
+    pub yaw: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GaitCommand {
+    pub name: String,
+    pub cycle_s: f32,
+    pub phases: Vec<GaitPhase>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GaitPhase {
+    pub duration: f32,
+    pub joints: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotionSequenceCommand {
+    pub frames: Vec<[f32; 5]>,
+    #[serde(default)]
+    pub loop_enabled: bool,
+    #[serde(default)]
+    pub repeat_delay_ms: f32,
+}
+
+#[derive(Debug, Clone)]
+struct JointServo {
+    parent: RigidBodyHandle,
+    child: RigidBodyHandle,
+    target: f32,
+    commanded_target: f32,
+    last_torque: f32,
+    integral_error: f32,
+}
+
+#[derive(Debug, Clone)]
+struct RobotHandles {
+    torso: RigidBodyHandle,
+    left_thigh: RigidBodyHandle,
+    left_shin: RigidBodyHandle,
+    left_shin_collider: ColliderHandle,
+    right_thigh: RigidBodyHandle,
+    right_shin: RigidBodyHandle,
+    right_shin_collider: ColliderHandle,
+    servos: BTreeMap<JointName, JointServo>,
+}
+
+#[derive(Debug, Clone)]
+struct GaitRuntime {
+    phases: Vec<GaitPhase>,
+    cycle_s: f32,
+    elapsed: f32,
+    start_targets: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone)]
+struct MotionSequenceRuntime {
+    frames: Vec<MotionFrame>,
+    elapsed: f32,
+    start_targets: BTreeMap<String, f32>,
+    loop_enabled: bool,
+    repeat_delay_s: f32,
+    delay_remaining_s: f32,
+}
+
+#[derive(Debug, Clone)]
+struct MotionFrame {
+    duration_s: f32,
+    joints: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkLegPhase {
+    LoadingResponse,
+    MidStance,
+    PreSwing,
+    InitialSwing,
+    MidSwing,
+    TerminalSwing,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WalkLegTarget {
+    target: [f32; 2],
+    phase: WalkLegPhase,
+    in_stance: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkSupportState {
+    DoubleSupportLeft,
+    SingleSupportLeft,
+    DoubleSupportRight,
+    SingleSupportRight,
+}
+
+struct RabbitRuntime {
+    model: rabbit::RabbitModel,
+    trajectory: rabbit::RabbitTrajectory,
+    goal: Option<rabbit::RabbitTrajectory>,
+    stance_left: bool,
+    starting: bool,
+    preparing: bool,
+    stopping: bool,
+    elapsed: f32,
+    steps: u64,
+    // One powered swing per approach; rearm only after the ball separates.
+    kick_step: Option<u64>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RabbitRunPhase { Stance, Flight }
+
+struct RabbitRunningRuntime {
+    recovery: rabbit_recovery::RecoveryStatus,
+    startup_elapsed: f64,
+    startup_q_error: Option<[f64;5]>,
+    startup_v_error: [f64;5],
+    model: rabbit::RabbitModel,
+    plan: rabbit::RabbitRunningPlan,
+    stance: rabbit::RabbitTrajectory,
+    stance_left: bool,
+    phase: RabbitRunPhase,
+    elapsed: f32,
+    steps: u64,
+    no_contact_ticks: u8,
+    lean_offset: f64,
+    target_pitch: f64,
+}
+
+pub struct Simulation {
+    pipeline: PhysicsPipeline,
+    gravity: Vector<Real>,
+    integration_parameters: IntegrationParameters,
+    island_manager: IslandManager,
+    broad_phase: BroadPhaseMultiSap,
+    narrow_phase: NarrowPhase,
+    bodies: RigidBodySet,
+    colliders: ColliderSet,
+    impulse_joints: ImpulseJointSet,
+    multibody_joints: MultibodyJointSet,
+    ccd_solver: CCDSolver,
+    query_pipeline: QueryPipeline,
+    ball: Option<RigidBodyHandle>,
+    robot: Option<RobotHandles>,
+    scene: SceneKind,
+    config: SimulationConfig,
+    canonical_initial_pose: InitialPoseConfig,
+    canonical_zero_offsets: JointAnglesConfig,
+    canonical_initial_targets: JointAnglesConfig,
+    time: f32,
+    paused: bool,
+    accumulator: f32,
+    gait: Option<GaitRuntime>,
+    motion_sequence: Option<MotionSequenceRuntime>,
+    robot_suspended: bool,
+    servo_kp: f32,
+    servo_ki: f32,
+    servo_kd: f32,
+    servo_max_torque: f32,
+    servo_max_speed_rad_s: f32,
+    rl_episode_time: f32,
+    rl_last_base_x: f32,
+    rl_last_ball_x: f32,
+    rl_last_action_deg: [f32; 4],
+    rl_residual_enabled: bool,
+    rl_residual_action_deg: [f32; 4],
+    external_torque_norm: Option<[f32; 4]>,
+    rl_target_direction: f32,
+    directional_walk_enabled: bool,
+    rabbit_runtime: Option<RabbitRuntime>,
+    rabbit_running: Option<RabbitRunningRuntime>,
+    rabbit_external_torque_norm: Option<([f32; 4], f32)>,
+    rabbit_stance_push: Option<(f32, f64, f64)>,
+    rabbit_stance_push_period: Option<(u64,u64)>,
+    rabbit_flight_pd: Option<(f64, f64, [f64; 4])>,
+    rabbit_running_flight_time_scale: f64,
+    rabbit_flight_placement: Option<(f64, f64)>,
+    rabbit_flight_com_placement: Option<(f64,f64,f64)>,
+    rabbit_flight_com_ik: Option<(f64,f64,f64,f64)>,
+    rabbit_stance_swing_clearance: Option<(f64,f64,f64,f64)>,
+    rabbit_flight_pitch: Option<(f64, f64)>,
+    rabbit_running_flight_reference: Option<rabbit::RabbitReferenceTable>,
+    rabbit_running_first_flight_reference: Option<rabbit::RabbitReferenceTable>,
+    rabbit_first_takeoff_clearance_m: f32,
+    rabbit_running_stance_gains: Option<(f64,f64)>,
+    rabbit_running_speed_feedback: Option<(f64,f64)>,
+    rabbit_startup_blend_s: f64,
+    rabbit_stance_phase_feedback: f64,
+    rabbit_knp_phase_sensor_table: Option<rabbit::RabbitLeanSensorTable>,
+    rabbit_reference_residual: [f64;4],
+    rabbit_lean_residual: f64,
+    rabbit_recovery_grace_s: f32,
+    rabbit_recovery_pd: [f32;2],
+    rabbit_recovery_policy: Option<rabbit_recovery::RecoveryPolicy>,
+    rabbit_recovery_motion: Option<rabbit_recovery::RecoveryMotion>,
+    rabbit_adaptive_lean: Option<(f64,f64,f64,f64,f64,f64)>,
+    rabbit_knp_lean_table: Option<rabbit::RabbitLeanTable>,
+    rabbit_knp_lean_sensor_table: Option<rabbit::RabbitLeanSensorTable>,
+    rabbit_teacher_torque_norm: Option<[f32; 4]>,
+    rabbit_virtual_reference: Option<(rabbit::RabbitReferenceTable, f32)>,
+    rabbit_transition_gain: f64,
+    rabbit_transition_after_steps: u64,
+    rabbit_brake_gain: f64,
+    gait_quality: gait_quality::GaitQuality,
+    walk_target_speed: f32,
+    walk_speed: f32,
+    walk_measured_speed: f32,
+    walk_elapsed: f32,
+    walk_phase: f32,
+    walk_support_state: WalkSupportState,
+    walk_state_time: f32,
+    walk_left_anchor: [f32; 2],
+    walk_right_anchor: [f32; 2],
+    walk_left_swing_start: [f32; 2],
+    walk_right_swing_start: [f32; 2],
+    walk_left_touchdown_x: f32,
+    walk_right_touchdown_x: f32,
+    walk_left_in_stance: bool,
+    walk_right_in_stance: bool,
+    recovery_active: bool,
+    recovery_timer: f32,
+    kick_active: bool,
+    kick_timer: f32,
+    kick_support_side: LegSide,
+    kick_swing_side: LegSide,
+    kick_impulse_used: bool,
+    kick_cooldown: f32,
+}
+
+impl Default for Simulation {
+    fn default() -> Self {
+        Self::from_config(SimulationConfig::default())
+    }
+}
+
+impl Simulation {
+    pub fn from_config(config: SimulationConfig) -> Self {
+        Self::new_robot_with_config_and_suspension(config, false)
+    }
+
+    pub fn from_config_file(path: impl AsRef<Path>) -> Result<Self, String> {
+        let config = SimulationConfig::load_from_file(path)?;
+        Ok(Self::from_config(config))
+    }
+
+    pub fn save_config_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.sync_runtime_settings_into_config();
+        self.config.save_to_file(path)
+    }
+
+    pub fn new_ball() -> Self {
+        Self::new_ball_with_config(SimulationConfig::default())
+    }
+
+    pub fn new_ball_with_config(config: SimulationConfig) -> Self {
+        let mut sim = Self::empty(SceneKind::Ball, config);
+        sim.spawn_ground();
+        sim.spawn_ball(vector![0.0, 5.0], 0.5, 1.0);
+        sim
+    }
+
+    pub fn new_robot() -> Self {
+        Self::new_robot_with_config_and_suspension(SimulationConfig::default(), false)
+    }
+
+    pub fn new_robot_with_suspension(suspended: bool) -> Self {
+        Self::new_robot_with_config_and_suspension(SimulationConfig::default(), suspended)
+    }
+
+    pub fn new_robot_with_config_and_suspension(config: SimulationConfig, suspended: bool) -> Self {
+        let mut sim = Self::empty(SceneKind::Robot, config);
+        sim.robot_suspended = suspended;
+        sim.spawn_ground();
+        sim.spawn_robot();
+        sim.refresh_walk_anchors_from_pose();
+        sim.spawn_robot_ball();
+        sim.sync_rl_trackers();
+        sim
+    }
+
+    fn empty(scene: SceneKind, config: SimulationConfig) -> Self {
+        let mut integration_parameters = IntegrationParameters::default();
+        integration_parameters.dt = config.physics.dt.max(1.0 / 1000.0);
+
+        Self {
+            pipeline: PhysicsPipeline::new(),
+            gravity: vector![0.0, config.physics.gravity_y],
+            integration_parameters,
+            island_manager: IslandManager::new(),
+            broad_phase: BroadPhaseMultiSap::new(),
+            narrow_phase: NarrowPhase::new(),
+            bodies: RigidBodySet::new(),
+            colliders: ColliderSet::new(),
+            impulse_joints: ImpulseJointSet::new(),
+            multibody_joints: MultibodyJointSet::new(),
+            ccd_solver: CCDSolver::new(),
+            query_pipeline: QueryPipeline::new(),
+            ball: None,
+            robot: None,
+            scene,
+            config: config.clone(),
+            canonical_initial_pose: config.robot.initial_pose.clone(),
+            canonical_zero_offsets: config.servo.zero_offsets,
+            canonical_initial_targets: config.servo.initial_targets,
+            time: 0.0,
+            paused: false,
+            accumulator: 0.0,
+            gait: None,
+            motion_sequence: None,
+            robot_suspended: false,
+            servo_kp: config.servo.kp,
+            servo_ki: config.servo.ki,
+            servo_kd: config.servo.kd,
+            servo_max_torque: config.servo.max_torque,
+            servo_max_speed_rad_s: config.servo.max_speed_deg_s.to_radians(),
+            rl_episode_time: 0.0,
+            rl_last_base_x: 0.0,
+            rl_last_ball_x: 0.0,
+            rl_last_action_deg: [0.0; 4],
+            rl_residual_enabled: false,
+            rl_residual_action_deg: [0.0; 4],
+            external_torque_norm: None,
+            rl_target_direction: 1.0,
+            directional_walk_enabled: false,
+            rabbit_runtime: None,
+            rabbit_running: None,
+            rabbit_external_torque_norm: None,
+            rabbit_stance_push: None,
+            rabbit_stance_push_period: None,
+            rabbit_flight_pd: None,
+            rabbit_running_flight_time_scale: 1.0,
+            rabbit_flight_placement: None,
+            rabbit_flight_com_placement: None,
+            rabbit_flight_com_ik: None,
+            rabbit_stance_swing_clearance: None,
+            rabbit_flight_pitch: None,
+            rabbit_running_flight_reference: None,
+            rabbit_running_first_flight_reference: None,
+            rabbit_first_takeoff_clearance_m: 0.0,
+            rabbit_running_stance_gains: None,
+            rabbit_running_speed_feedback: None,
+            rabbit_startup_blend_s: 0.0,
+            rabbit_stance_phase_feedback: 0.0,
+            rabbit_knp_phase_sensor_table: None,
+            rabbit_reference_residual: [0.0;4],
+            rabbit_lean_residual: 0.0,
+            rabbit_recovery_grace_s: 0.0,
+            rabbit_recovery_pd: [30.0,1.5],
+            rabbit_recovery_policy: None,
+            rabbit_recovery_motion: None,
+            rabbit_adaptive_lean: None,
+            rabbit_knp_lean_table: None,
+            rabbit_knp_lean_sensor_table: None,
+            rabbit_teacher_torque_norm: None,
+            rabbit_virtual_reference: None,
+            rabbit_transition_gain: 0.10,
+            rabbit_transition_after_steps: 5,
+            rabbit_brake_gain: 0.05,
+            gait_quality: gait_quality::GaitQuality::default(),
+            walk_target_speed: config.walk.nominal_speed_mps.min(config.walk.max_speed_mps),
+            walk_speed: 0.0,
+            walk_measured_speed: 0.0,
+            walk_elapsed: 0.0,
+            walk_phase: 0.0,
+            walk_support_state: WalkSupportState::DoubleSupportLeft,
+            walk_state_time: 0.0,
+            walk_left_anchor: [0.0, GROUND_Y],
+            walk_right_anchor: [0.0, GROUND_Y],
+            walk_left_swing_start: [0.0, GROUND_Y],
+            walk_right_swing_start: [0.0, GROUND_Y],
+            walk_left_touchdown_x: 0.0,
+            walk_right_touchdown_x: 0.0,
+            walk_left_in_stance: true,
+            walk_right_in_stance: true,
+            recovery_active: false,
+            recovery_timer: 0.0,
+            kick_active: false,
+            kick_timer: 0.0,
+            kick_support_side: LegSide::Left,
+            kick_swing_side: LegSide::Right,
+            kick_impulse_used: false,
+            kick_cooldown: 0.0,
+        }
+    }
+
+    fn spawn_ground(&mut self) {
+        let ground = self.bodies.insert(
+            RigidBodyBuilder::fixed()
+                .translation(vector![0.0, -0.1])
+                .build(),
+        );
+        // Disjoint collision filters give the same surface independently tuned
+        // foot and ball materials, without duplicate contacts on either object.
+        let pairs = if let Some(ball_friction) = self.config.physics.ball_ground_friction {
+            vec![(all_robot_groups() | GROUP_ENVIRONMENT, self.config.physics.ground_friction),
+                 (GROUP_BALL, ball_friction)]
+        } else {
+            vec![(all_robot_groups() | GROUP_BALL | GROUP_ENVIRONMENT, self.config.physics.ground_friction)]
+        };
+        for (filter, friction) in pairs {
+            self.colliders.insert_with_parent(
+                ColliderBuilder::cuboid(self.config.physics.ground_half_width, 0.1)
+                    .collision_groups(InteractionGroups::new(GROUP_GROUND, filter))
+                    .friction(friction)
+                    .restitution(self.config.physics.ground_restitution)
+                    .build(),
+                ground,
+                &mut self.bodies,
+            );
+        }
+    }
+
+    fn spawn_ball(&mut self, translation: Vector<Real>, radius: f32, mass: f32) {
+        let area = std::f32::consts::PI * radius * radius;
+        let density = if area > f32::EPSILON {
+            mass.max(0.0001) / area
+        } else {
+            1.0
+        };
+        let handle = self.bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(translation)
+                .angular_damping(0.02)
+                .linear_damping(0.002)
+                .build(),
+        );
+        let collider = ColliderBuilder::ball(radius)
+            .collision_groups(InteractionGroups::new(
+                GROUP_BALL,
+                all_robot_groups() | GROUP_GROUND | GROUP_BALL | GROUP_ENVIRONMENT,
+            ))
+            .density(density)
+            .friction(0.06)
+            .friction_combine_rule(CoefficientCombineRule::Multiply)
+            .restitution(0.95)
+            .build();
+        self.colliders
+            .insert_with_parent(collider, handle, &mut self.bodies);
+        self.ball = Some(handle);
+    }
+
+    fn spawn_robot_ball(&mut self) {
+        let translation = self.robot_ball_translation();
+        self.spawn_ball(translation, ROBOT_BALL_RADIUS_M, self.config.robot.ball_mass_kg);
+    }
+
+    fn robot_ball_translation(&self) -> Vector<Real> {
+        let pose = &self.config.robot.initial_pose;
+        // Measure the distance from the robot's start, not the leading limb.
+        let ball_offset_x = self.config.robot.ball_spawn_offset_x_m.max(ROBOT_BALL_RADIUS_M + 0.05);
+        let ball_x = pose.torso.x + self.rl_target_direction.signum() * ball_offset_x;
+        let ball_y = ROBOT_BALL_RADIUS_M + ROBOT_BALL_CLEARANCE_Y_M;
+        vector![ball_x, ball_y]
+    }
+
+    fn align_ball_with_target_direction(&mut self) {
+        let translation = self.robot_ball_translation();
+        if let Some(handle) = self.ball {
+            if let Some(ball) = self.bodies.get_mut(handle) {
+                ball.set_translation(translation, true);
+                ball.set_linvel(vector![0.0, 0.0], true);
+                ball.set_angvel(0.0, true);
+            }
+        }
+    }
+
+    fn spawn_robot(&mut self) {
+        let torso_half_width = self.config.robot.torso.width * 0.5;
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        let leg_half_width = self.config.robot.thigh.width * 0.5;
+        let thigh_half_height = self.config.robot.thigh.length * 0.5;
+        let shin_half_height = self.config.robot.shin.length * 0.5;
+        let pose = self.config.robot.initial_pose.clone();
+        let (torso, _) = self.spawn_box(
+            vector![pose.torso.x, pose.torso.y],
+            pose.torso.angle,
+            torso_half_width,
+            torso_half_height,
+            self.config.robot.torso.mass,
+            self.config.robot.torso.friction,
+            GROUP_TORSO,
+            robot_world_filter(),
+        );
+        let (left_thigh, _) = self.spawn_box(
+            vector![pose.left_thigh.x, pose.left_thigh.y],
+            pose.left_thigh.angle,
+            leg_half_width,
+            thigh_half_height,
+            self.config.robot.thigh.mass,
+            self.config.robot.thigh.friction,
+            GROUP_LEFT_LEG,
+            GROUP_LEFT_LEG | robot_world_filter(),
+        );
+        let (left_shin, left_shin_collider) = self.spawn_box(
+            vector![pose.left_shin.x, pose.left_shin.y],
+            pose.left_shin.angle,
+            leg_half_width,
+            shin_half_height,
+            self.config.robot.shin.mass,
+            self.config.robot.shin.friction,
+            GROUP_LEFT_LEG,
+            GROUP_LEFT_LEG | robot_world_filter(),
+        );
+        let (right_thigh, _) = self.spawn_box(
+            vector![pose.right_thigh.x, pose.right_thigh.y],
+            pose.right_thigh.angle,
+            leg_half_width,
+            thigh_half_height,
+            self.config.robot.thigh.mass,
+            self.config.robot.thigh.friction,
+            GROUP_RIGHT_LEG,
+            GROUP_RIGHT_LEG | robot_world_filter(),
+        );
+        let (right_shin, right_shin_collider) = self.spawn_box(
+            vector![pose.right_shin.x, pose.right_shin.y],
+            pose.right_shin.angle,
+            leg_half_width,
+            shin_half_height,
+            self.config.robot.shin.mass,
+            self.config.robot.shin.friction,
+            GROUP_RIGHT_LEG,
+            GROUP_RIGHT_LEG | robot_world_filter(),
+        );
+
+        self.insert_revolute(
+            torso,
+            left_thigh,
+            point![0.0, -torso_half_height],
+            point![0.0, thigh_half_height],
+        );
+        self.insert_revolute(left_thigh, left_shin, point![0.0, -thigh_half_height], point![0.0, shin_half_height]);
+        self.insert_revolute(
+            torso,
+            right_thigh,
+            point![0.0, -torso_half_height],
+            point![0.0, thigh_half_height],
+        );
+        self.insert_revolute(right_thigh, right_shin, point![0.0, -thigh_half_height], point![0.0, shin_half_height]);
+
+        if self.robot_suspended {
+            let anchor = self.bodies.insert(
+                RigidBodyBuilder::fixed()
+                    .translation(vector![
+                        pose.torso.x,
+                        pose.torso.y + torso_half_height + self.config.robot.suspend_clearance
+                    ])
+                    .build(),
+            );
+            let hang_joint = RevoluteJointBuilder::new()
+                .local_anchor1(point![0.0, 0.0])
+                .local_anchor2(point![0.0, torso_half_height])
+                .contacts_enabled(false)
+                .build();
+            self.impulse_joints.insert(anchor, torso, hang_joint, true);
+        }
+
+        let mut servos = BTreeMap::new();
+        servos.insert(
+            JointName::RightHip,
+            JointServo::new(torso, right_thigh, self.config.servo.initial_targets.right_hip),
+        );
+        servos.insert(
+            JointName::RightKnee,
+            JointServo::new(right_thigh, right_shin, self.config.servo.initial_targets.right_knee),
+        );
+        servos.insert(
+            JointName::LeftHip,
+            JointServo::new(torso, left_thigh, self.config.servo.initial_targets.left_hip),
+        );
+        servos.insert(
+            JointName::LeftKnee,
+            JointServo::new(left_thigh, left_shin, self.config.servo.initial_targets.left_knee),
+        );
+
+        self.robot = Some(RobotHandles {
+            torso,
+            left_thigh,
+            left_shin,
+            left_shin_collider,
+            right_thigh,
+            right_shin,
+            right_shin_collider,
+            servos,
+        });
+    }
+
+    fn spawn_box(
+        &mut self,
+        translation: Vector<Real>,
+        angle: f32,
+        half_x: f32,
+        half_y: f32,
+        mass: f32,
+        friction: f32,
+        membership: Group,
+        filter: Group,
+    ) -> (RigidBodyHandle, ColliderHandle) {
+        let area = (half_x * 2.0) * (half_y * 2.0);
+        let density = if area > f32::EPSILON {
+            mass.max(0.0001) / area
+        } else {
+            1.0
+        };
+        let handle = self.bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(translation)
+                .rotation(angle)
+                .angular_damping(self.config.robot.body_dynamics.angular_damping)
+                .linear_damping(self.config.robot.body_dynamics.linear_damping)
+                .build(),
+        );
+        let collider = self.colliders.insert_with_parent(
+            ColliderBuilder::cuboid(half_x, half_y)
+                .collision_groups(InteractionGroups::new(
+                    membership,
+                    filter,
+                ))
+                .density(density)
+                .friction(friction)
+                .restitution(0.02)
+                .build(),
+            handle,
+            &mut self.bodies,
+        );
+        (handle, collider)
+    }
+
+    fn insert_revolute(
+        &mut self,
+        parent: RigidBodyHandle,
+        child: RigidBodyHandle,
+        parent_anchor: Point<Real>,
+        child_anchor: Point<Real>,
+    ) {
+        let joint = RevoluteJointBuilder::new()
+            .local_anchor1(parent_anchor)
+            .local_anchor2(child_anchor)
+            .contacts_enabled(false)
+            .build();
+        self.impulse_joints.insert(parent, child, joint, true);
+    }
+
+    pub fn reset_ball(&mut self) {
+        *self = match self.scene {
+            SceneKind::Ball => Self::new_ball_with_config(self.config.clone()),
+            SceneKind::Robot => Self::new_robot_with_config_and_suspension(
+                self.config.clone(),
+                self.robot_suspended,
+            ),
+        };
+    }
+
+    pub fn reset_robot(&mut self) {
+        let planned_active=self.rabbit_runtime.is_some() || self.rabbit_running.is_some();
+        let gains = self.servo_gains();
+        let direction = self.rl_target_direction;
+        let walk_enabled = self.directional_walk_enabled;
+        let walk_target_speed = self.walk_target_speed;
+        *self = Self::new_robot_with_config_and_suspension(self.config.clone(), self.robot_suspended);
+        self.rl_target_direction = direction;
+        self.directional_walk_enabled = walk_enabled && !planned_active;
+        self.walk_target_speed = walk_target_speed;
+        self.walk_phase = 0.0;
+        self.refresh_walk_anchors_from_pose();
+        self.align_ball_with_target_direction();
+        self.set_servo_gains(gains.0, gains.1, gains.2, gains.3);
+        let targets = self.config.servo.initial_targets;
+        self.apply_targets(ServoTargets {
+            right_hip: Some(targets.right_hip),
+            right_knee: Some(targets.right_knee),
+            left_hip: Some(targets.left_hip),
+            left_knee: Some(targets.left_knee),
+        });
+        self.sync_rl_trackers();
+    }
+
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+    }
+
+    pub fn set_scene(&mut self, scene: SceneKind) {
+        let direction = self.rl_target_direction;
+        let walk_enabled = self.directional_walk_enabled;
+        let walk_target_speed = self.walk_target_speed;
+        *self = match scene {
+            SceneKind::Ball => Self::new_ball_with_config(self.config.clone()),
+            SceneKind::Robot => Self::new_robot_with_config_and_suspension(self.config.clone(), self.robot_suspended),
+        };
+        self.rl_target_direction = direction;
+        self.directional_walk_enabled = walk_enabled && scene == SceneKind::Robot;
+        self.walk_target_speed = walk_target_speed;
+        if scene == SceneKind::Robot {
+            self.align_ball_with_target_direction();
+        }
+        self.sync_rl_trackers();
+    }
+
+    pub fn set_robot_suspended(&mut self, suspended: bool) {
+        let targets = self.current_targets();
+        let gains = self.servo_gains();
+        let direction = self.rl_target_direction;
+        let walk_enabled = self.directional_walk_enabled;
+        let walk_target_speed = self.walk_target_speed;
+        *self = Self::new_robot_with_config_and_suspension(self.config.clone(), suspended);
+        self.rl_target_direction = direction;
+        self.directional_walk_enabled = walk_enabled;
+        self.walk_target_speed = walk_target_speed;
+        self.align_ball_with_target_direction();
+        self.set_servo_gains(gains.0, gains.1, gains.2, gains.3);
+        self.apply_targets(targets);
+        self.sync_rl_trackers();
+    }
+
+    pub fn robot_suspended(&self) -> bool {
+        self.robot_suspended
+    }
+
+    pub fn suspend_clearance(&self) -> f32 {
+        self.config.robot.suspend_clearance
+    }
+
+    pub fn set_suspend_clearance(&mut self, clearance: f32) {
+        let clearance = clearance.clamp(0.05, 3.0);
+        self.sync_runtime_settings_into_config();
+        self.config.robot.suspend_clearance = clearance;
+
+        if self.scene == SceneKind::Robot {
+            let paused = self.paused;
+            let config = self.config.clone();
+            let suspended = self.robot_suspended;
+            let direction = self.rl_target_direction;
+            let walk_enabled = self.directional_walk_enabled;
+            let walk_target_speed = self.walk_target_speed;
+            *self = Self::new_robot_with_config_and_suspension(config, suspended);
+            self.rl_target_direction = direction;
+            self.directional_walk_enabled = walk_enabled;
+            self.walk_target_speed = walk_target_speed;
+            self.align_ball_with_target_direction();
+            self.paused = paused;
+            self.sync_rl_trackers();
+        }
+    }
+
+    pub fn set_servo_gains(&mut self, kp: f32, ki: f32, kd: f32, max_torque: f32) {
+        self.servo_kp = kp.clamp(-20.0, 20.0);
+        self.servo_ki = ki.clamp(-5.0, 5.0);
+        self.servo_kd = kd.clamp(-1.0, 1.0);
+        self.servo_max_torque = max_torque.clamp(0.1, 100.0);
+        self.config.servo.kp = self.servo_kp;
+        self.config.servo.ki = self.servo_ki;
+        self.config.servo.kd = self.servo_kd;
+        self.config.servo.max_torque = self.servo_max_torque;
+        if let Some(runtime) = self.rabbit_runtime.as_mut() {
+            runtime.model.set_torque_limit(self.servo_max_torque as f64);
+        }
+        if let Some(runtime) = self.rabbit_running.as_mut() {
+            runtime.model.set_torque_limit(self.servo_max_torque as f64);
+        }
+    }
+
+    pub fn servo_gains(&self) -> (f32, f32, f32, f32) {
+        (self.servo_kp, self.servo_ki, self.servo_kd, self.servo_max_torque)
+    }
+
+    pub fn servo_zero_offsets(&self) -> JointAnglesConfig {
+        self.config.servo.zero_offsets
+    }
+
+    pub fn set_servo_zero_offsets(&mut self, zeros: JointAnglesConfig) {
+        self.config.servo.zero_offsets = zeros;
+        self.canonical_zero_offsets = zeros;
+    }
+
+    pub fn set_servo_zero_to_current_pose(&mut self) {
+        let zeros = JointAnglesConfig {
+            right_hip: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.torso, robot.right_thigh))
+                .unwrap_or(self.config.servo.zero_offsets.right_hip),
+            right_knee: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.right_thigh, robot.right_shin))
+                .unwrap_or(self.config.servo.zero_offsets.right_knee),
+            left_hip: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.torso, robot.left_thigh))
+                .unwrap_or(self.config.servo.zero_offsets.left_hip),
+            left_knee: self
+                .robot
+                .as_ref()
+                .and_then(|robot| self.relative_angle(robot.left_thigh, robot.left_shin))
+                .unwrap_or(self.config.servo.zero_offsets.left_knee),
+        };
+        self.set_servo_zero_offsets(zeros);
+    }
+
+    pub fn set_joint_target(&mut self, joint: JointName, angle: f32) {
+        if let Some(robot) = &mut self.robot {
+            if let Some(servo) = robot.servos.get_mut(&joint) {
+                servo.commanded_target = clamp_joint_target(joint, angle);
+            }
+        }
+    }
+
+    pub fn apply_targets(&mut self, targets: ServoTargets) {
+        for joint in JointName::ALL {
+            if let Some(target) = targets.get(joint) {
+                self.set_joint_target(joint, target);
+            }
+        }
+    }
+
+    pub fn apply_pose(&mut self, pose: PoseCommand) {
+        self.rabbit_runtime=None;self.directional_walk_enabled=false;
+        let mut targets = ServoTargets::default();
+        targets.right_hip = pose.joints.get("right_hip").copied();
+        targets.right_knee = pose.joints.get("right_knee").copied();
+        targets.left_hip = pose.joints.get("left_hip").copied();
+        targets.left_knee = pose.joints.get("left_knee").copied();
+        self.apply_targets(targets);
+    }
+
+    pub fn set_gait(&mut self, gait: GaitCommand) {
+        self.rabbit_runtime=None;self.directional_walk_enabled=false;
+        let start_targets = self.current_targets_map();
+        self.gait = Some(GaitRuntime {
+            phases: gait.phases,
+            cycle_s: gait.cycle_s.max(self.dt()),
+            elapsed: 0.0,
+            start_targets,
+        });
+        self.motion_sequence = None;
+    }
+
+    pub fn set_motion_sequence_deg(&mut self, command: MotionSequenceCommand) {
+        self.rabbit_runtime=None;self.directional_walk_enabled=false;
+        let frames = command
+            .frames
+            .into_iter()
+            .map(|frame| MotionFrame {
+                duration_s: (frame[0].max(1.0)) / 1000.0,
+                joints: BTreeMap::from([
+                    ("right_hip".to_owned(), frame[1].to_radians()),
+                    ("right_knee".to_owned(), frame[2].to_radians()),
+                    ("left_hip".to_owned(), frame[3].to_radians()),
+                    ("left_knee".to_owned(), frame[4].to_radians()),
+                ]),
+            })
+            .collect();
+        self.motion_sequence = Some(MotionSequenceRuntime {
+            frames,
+            elapsed: 0.0,
+            start_targets: self.current_targets_map(),
+            loop_enabled: command.loop_enabled,
+            repeat_delay_s: (command.repeat_delay_ms.max(0.0)) / 1000.0,
+            delay_remaining_s: 0.0,
+        });
+        self.gait = None;
+    }
+
+    pub fn clear_gait(&mut self) {
+        self.gait = None;
+        self.motion_sequence = None;
+    }
+
+    /// Hold normalized motor torques for an external controller; None restores servo control.
+    pub fn set_external_torque_norm(&mut self, torques: Option<[f32; 4]>) {
+        if torques.is_some() {
+            self.rabbit_runtime = None;
+            self.directional_walk_enabled = false;
+            self.rl_residual_enabled = false;
+        }
+        self.external_torque_norm = torques.map(|values| values.map(|value| {
+            if value.is_finite() { value.clamp(-1.0, 1.0) } else { 0.0 }
+        }));
+    }
+
+    /// Blend a KNP motor command with the RABBIT teacher while retaining phase tracking.
+    pub fn set_rabbit_external_torque_norm(
+        &mut self,
+        torques: Option<[f32; 4]>,
+        mix: f32,
+    ) -> Result<(), String> {
+        if !mix.is_finite() || !(0.0..=1.0).contains(&mix) {
+            return Err("mix must be between 0 and 1".into());
+        }
+        if torques.is_some() && self.rabbit_runtime.is_none() {
+            return Err("RABBIT controller is not active".into());
+        }
+        self.rabbit_external_torque_norm = torques.map(|values| {
+            (values.map(|value| if value.is_finite() { value.clamp(-1.0, 1.0) } else { 0.0 }), mix)
+        });
+        Ok(())
+    }
+
+    /// Let an external KNP policy specify phase-based joint references while
+    /// RABBIT retains contact estimation and inverse-dynamics tracking.
+    pub fn set_rabbit_virtual_reference(
+        &mut self,
+        reference: Option<rabbit::RabbitReferenceTable>,
+        mix: f32,
+    ) -> Result<(), String> {
+        if !mix.is_finite() || !(0.0..=1.0).contains(&mix) {
+            return Err("mix must be between 0 and 1".into());
+        }
+        if let Some(table) = reference {
+            if self.rabbit_runtime.is_none() && self.rabbit_running.is_none() {
+                return Err("RABBIT controller is not active".into());
+            }
+            table.validate()?;
+            self.rabbit_virtual_reference = Some((table, mix));
+        } else {
+            self.rabbit_virtual_reference = None;
+        }
+        Ok(())
+    }
+
+    /// Experimental stance-knee extension pulse applied after the virtual-constraint controller.
+    pub fn set_rabbit_stance_push(&mut self, push: Option<(f32, f64, f64)>) -> Result<(), String> {
+        if let Some((amplitude, start, end)) = push {
+            if !amplitude.is_finite() || !start.is_finite() || !end.is_finite()
+                || !(0.0..=1.0).contains(&start) || !(0.0..=1.0).contains(&end)
+                || start >= end || amplitude.abs() > self.servo_max_torque {
+                return Err("stance push requires finite torque within motor limit and 0 <= start < end <= 1".into());
+            }
+        }
+        self.rabbit_stance_push = push;
+        Ok(())
+    }
+
+    pub fn set_rabbit_stance_push_period(&mut self, period: Option<(u64,u64)>) -> Result<(),String> {
+        if let Some((every,offset))=period {
+            if every==0 || every>100 || offset>=every {return Err("push period must be 1..100 with offset < period".into());}
+        }
+        self.rabbit_stance_push_period=period;
+        Ok(())
+    }
+
+    /// Experimental airborne joint tracking toward the next landing posture.
+    pub fn set_rabbit_flight_pd(&mut self, gains: Option<(f64, f64, [f64; 4])>) -> Result<(), String> {
+        if let Some((kp, kd, offsets)) = gains {
+            if !kp.is_finite() || !kd.is_finite() || !(0.0..=500.0).contains(&kp)
+                || !(0.0..=50.0).contains(&kd)
+                || offsets.iter().any(|x| !x.is_finite() || x.abs() > 1.0) {
+                return Err("flight PD gains must be finite and nonnegative".into());
+            }
+        }
+        self.rabbit_flight_pd = gains;
+        Ok(())
+    }
+
+    /// Shift the airborne landing leg with forward-speed error.
+    pub fn set_rabbit_flight_placement(&mut self, feedback: Option<(f64, f64)>) -> Result<(), String> {
+        if let Some((gain, speed)) = feedback {
+            if !gain.is_finite() || !speed.is_finite() || gain.abs() > 2.0 || !(0.0..=3.0).contains(&speed) {
+                return Err("flight placement requires |gain| <= 2 and speed 0..3 m/s".into());
+            }
+        }
+        self.rabbit_flight_placement = feedback;
+        Ok(())
+    }
+
+    /// Place the swing foot near the predicted center of mass at touchdown.
+    pub fn set_rabbit_flight_com_placement(&mut self, feedback: Option<(f64,f64,f64)>) -> Result<(),String> {
+        if let Some((gain,offset,lookahead))=feedback {
+            if ![gain,offset,lookahead].iter().all(|v|v.is_finite())
+                || gain.abs()>4.0 || !(-0.2..=0.2).contains(&offset)
+                || !(0.0..=2.0).contains(&lookahead) {
+                return Err("invalid center-of-mass foot placement feedback".into());
+            }
+        }
+        self.rabbit_flight_com_placement=feedback;
+        Ok(())
+    }
+
+    /// Blend the airborne swing leg toward a toe position behind future COM.
+    pub fn set_rabbit_flight_com_ik(&mut self, feedback: Option<(f64,f64,f64,f64)>) -> Result<(),String> {
+        if let Some((offset,lookahead,blend,start))=feedback {
+            if ![offset,lookahead,blend,start].iter().all(|v|v.is_finite())
+                || !(-0.2..=0.2).contains(&offset)
+                || !(0.0..=2.0).contains(&lookahead)
+                || !(0.0..=1.0).contains(&blend)
+                || !(0.0..=0.9).contains(&start) {
+                return Err("invalid future-COM swing-foot IK parameters".into());
+            }
+        }
+        self.rabbit_flight_com_ik=feedback;
+        Ok(())
+    }
+
+    pub fn set_rabbit_flight_pitch(&mut self, feedback: Option<(f64, f64)>) -> Result<(), String> {
+        if let Some((kp,kd))=feedback {
+            if !kp.is_finite() || !kd.is_finite() || kp.abs()>20.0 || kd.abs()>10.0 {
+                return Err("flight pitch gains must be finite and within bounds".into());
+            }
+        }
+        self.rabbit_flight_pitch=feedback;
+        Ok(())
+    }
+
+    pub fn set_rabbit_transition(&mut self, gain: f64, after_steps: u64) -> Result<(), String> {
+        if !gain.is_finite() || !(0.01..=1.0).contains(&gain) || after_steps > 20 {
+            return Err("transition requires gain 0.01..1 and after_steps 0..20".into());
+        }
+        self.rabbit_transition_gain = gain;
+        self.rabbit_transition_after_steps = after_steps;
+        Ok(())
+    }
+
+    pub fn set_rabbit_brake_gain(&mut self, gain: f64) -> Result<(), String> {
+        if !gain.is_finite() || !(0.01..=1.0).contains(&gain) {
+            return Err("brake gain must be between 0.01 and 1".into());
+        }
+        self.rabbit_brake_gain = gain;
+        Ok(())
+    }
+
+    pub fn rl_reset_with(&mut self, command: RlResetCommand) -> RlStepResult {
+        if self.scene != SceneKind::Robot {
+            self.set_scene(SceneKind::Robot);
+        }
+        if self.robot_suspended {
+            self.set_robot_suspended(false);
+        }
+        if let Some(direction) = command.direction {
+            self.set_target_direction(direction);
+        }
+        self.apply_directional_reset_profile();
+        self.reset_robot();
+        self.resume();
+        self.sync_rl_trackers();
+        self.rl_step_result(0.0, 0.0, 0.0)
+    }
+
+    pub fn rl_reset(&mut self) -> RlStepResult {
+        self.rl_reset_with(RlResetCommand::default())
+    }
+
+    pub fn rl_observation(&self) -> RlObservation {
+        let state = self.state();
+        let base = state.base.clone().unwrap_or(BodyState {
+            x: 0.0,
+            y: 0.0,
+            angle: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            omega: 0.0,
+        });
+        let center_of_mass = self.robot_center_of_mass();
+        let left_foot = state.left_foot.unwrap_or([base.x, GROUND_Y]);
+        let right_foot = state.right_foot.unwrap_or([base.x, GROUND_Y]);
+        let joint_names = ["right_hip", "right_knee", "left_hip", "left_knee"];
+        let mut values = vec![
+            self.rl_target_direction,
+            base.y,
+            base.angle,
+            base.vx,
+            base.vy,
+            base.omega,
+            self.walk_speed,
+            self.walk_target_speed,
+            self.walk_phase.sin(),
+            self.walk_phase.cos(),
+            center_of_mass.map(|com| com[0] - base.x).unwrap_or(0.0),
+            center_of_mass.map(|com| com[1] - base.y).unwrap_or(0.0),
+            if state.contacts.left_foot { 1.0 } else { 0.0 },
+            if state.contacts.right_foot { 1.0 } else { 0.0 },
+            state.ball.as_ref().map(|ball| ball.x - base.x).unwrap_or(0.0),
+            state.ball.as_ref().map(|ball| ball.y - base.y).unwrap_or(0.0),
+            left_foot[0] - base.x,
+            left_foot[1],
+            right_foot[0] - base.x,
+            right_foot[1],
+        ];
+        let mut names = vec![
+            "target_direction".to_owned(),
+            "torso_height".to_owned(),
+            "torso_angle".to_owned(),
+            "torso_vx".to_owned(),
+            "torso_vy".to_owned(),
+            "torso_omega".to_owned(),
+            "walk_speed".to_owned(),
+            "walk_target_speed".to_owned(),
+            "walk_phase_sin".to_owned(),
+            "walk_phase_cos".to_owned(),
+            "com_dx".to_owned(),
+            "com_dy".to_owned(),
+            "left_contact".to_owned(),
+            "right_contact".to_owned(),
+            "ball_dx".to_owned(),
+            "ball_dy".to_owned(),
+            "left_foot_dx".to_owned(),
+            "left_foot_y".to_owned(),
+            "right_foot_dx".to_owned(),
+            "right_foot_y".to_owned(),
+        ];
+        for name in joint_names {
+            let joint = state.joints.get(name).cloned().unwrap_or(JointState {
+                angle: 0.0,
+                velocity: 0.0,
+                target: 0.0,
+                torque: 0.0,
+            });
+            let zero = state.servo_zeros.get(name).copied().unwrap_or(0.0);
+            values.push(normalize_angle(joint.angle - zero));
+            names.push(format!("{name}_angle_rel_zero"));
+            values.push(joint.velocity);
+            names.push(format!("{name}_velocity"));
+            values.push(normalize_angle(joint.target - zero));
+            names.push(format!("{name}_target_rel_zero"));
+            values.push(joint.torque / self.servo_max_torque.max(0.0001));
+            names.push(format!("{name}_torque_norm"));
+        }
+
+        RlObservation {
+            values,
+            names,
+            action_order: JointName::ALL
+                .iter()
+                .map(|joint| joint.as_str().to_owned())
+                .collect(),
+            torso_height: base.y,
+            torso_angle: base.angle,
+            base_x: base.x,
+            target_direction: self.rl_target_direction,
+            center_of_mass,
+            contacts: state.contacts,
+        }
+    }
+
+    pub fn rl_step_deg(&mut self, command: RlStepCommand) -> RlStepResult {
+        let mut pending = self.begin_rl_step_deg(command);
+        while !self.advance_rl_step(&mut pending) {}
+        self.finish_rl_step(pending)
+    }
+
+    /// Desktop asynchronous action: persist targets and sample progress since
+    /// the previous command without advancing physics. repeat_steps is ignored.
+    pub fn submit_rl_action_deg(&mut self, command: RlStepCommand) -> RlStepResult {
+        let progress = self.robot_base_x() - self.rl_last_base_x;
+        let ball_progress = (self.ball_x() - self.rl_last_ball_x).max(0.0);
+        let pending = self.begin_rl_step_deg(command);
+        let penalty = pending.action_delta_penalty;
+        self.rl_last_action_deg = pending.bounded;
+        self.rl_last_base_x = self.robot_base_x();
+        self.rl_last_ball_x = self.ball_x();
+        self.rl_step_result(progress, ball_progress, penalty)
+    }
+
+    pub fn begin_rl_step_deg(&mut self, command: RlStepCommand) -> PendingRlStep {
+        if let Some(direction) = command.direction {
+            self.set_target_direction(direction);
+        }
+        if let Some(enabled) = command.walk_enabled {
+            self.set_directional_walk_enabled(enabled);
+        }
+        if let Some(speed_mps) = command.walk_speed_mps {
+            self.set_walk_target_speed(speed_mps);
+        }
+        self.clear_gait();
+        let limit_deg = self.config.rl.action_limit_deg.abs().max(1.0);
+        let bounded = command.action_deg.map(|value| value.clamp(-limit_deg, limit_deg));
+        let zeros = self.config.servo.zero_offsets;
+        let previous_action = self.rl_last_action_deg;
+        let base_x_before = self.robot_base_x();
+        let ball_x_before = self.ball_x();
+        let residual_mode = command.residual.unwrap_or(false);
+        self.rl_residual_enabled = residual_mode;
+        self.rl_residual_action_deg = if residual_mode { bounded } else { [0.0; 4] };
+        if !residual_mode {
+            self.apply_targets(ServoTargets {
+                right_hip: Some(zeros.right_hip + bounded[0].to_radians()),
+                right_knee: Some(zeros.right_knee + bounded[1].to_radians()),
+                left_hip: Some(zeros.left_hip + bounded[2].to_radians()),
+                left_knee: Some(zeros.left_knee + bounded[3].to_radians()),
+            });
+        }
+
+        let repeat_steps = command
+            .repeat_steps
+            .unwrap_or(self.config.rl.control_substeps)
+            .max(1);
+        let action_delta_penalty = bounded
+            .iter()
+            .zip(previous_action.iter())
+            .map(|(current, previous)| (current - previous).abs() / limit_deg)
+            .sum::<f32>();
+        PendingRlStep { repeat_steps, dt: self.dt(), executed_steps: 0,
+            bounded, base_x_before, ball_x_before, action_delta_penalty }
+    }
+
+    /// Advance one fixed tick; return true when the action is complete.
+    pub fn advance_rl_step(&mut self, pending: &mut PendingRlStep) -> bool {
+        self.step_fixed();
+        pending.executed_steps += 1;
+        let (done, truncated) = self.rl_done();
+        done || truncated || pending.executed_steps >= pending.repeat_steps
+    }
+
+    pub fn finish_rl_step(&mut self, pending: PendingRlStep) -> RlStepResult {
+        let base_x_after = self.robot_base_x();
+        let ball_x_after = self.ball_x();
+        let forward_progress = base_x_after - pending.base_x_before;
+        let ball_progress = (ball_x_after - pending.ball_x_before).max(0.0);
+        let action_delta_penalty = pending.action_delta_penalty;
+        self.rl_last_action_deg = pending.bounded;
+        self.rl_last_base_x = base_x_after;
+        self.rl_last_ball_x = ball_x_after;
+        self.rl_step_result(forward_progress, ball_progress, action_delta_penalty)
+    }
+
+    pub fn set_target_direction(&mut self, direction: f32) {
+        self.rl_target_direction = if direction < 0.0 { -1.0 } else { 1.0 };
+        if self.scene == SceneKind::Robot {
+            self.align_ball_with_target_direction();
+        }
+    }
+
+    pub fn target_direction(&self) -> f32 {
+        self.rl_target_direction
+    }
+
+    pub fn set_directional_walk_enabled(&mut self, enabled: bool) {
+        if enabled {if let Some(runtime)=self.rabbit_runtime.as_mut() {
+            if !self.directional_walk_enabled {
+                runtime.elapsed=0.0;runtime.preparing=true;runtime.starting=true;runtime.steps=0;runtime.kick_step=None;
+                runtime.trajectory=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json")).expect("validated startup gait");
+                self.walk_speed=0.0;
+            }
+            runtime.stopping=false;
+        }}
+        if !enabled {
+            if let Some(runtime)=self.rabbit_runtime.as_mut() {
+                if runtime.stopping { return; }
+                runtime.stopping=true;
+                // Brake through the slow orbit before holding a fast-moving body.
+                let braking_plan=if runtime.trajectory.speed_mps>0.6 {include_str!("../../motions/rabbit-20cm-050.json")}
+                    else {include_str!("../../motions/rabbit-20cm-030.json")};
+                runtime.goal=Some(rabbit::RabbitTrajectory::from_json(braking_plan).expect("validated built-in braking gait"));
+                return;
+            }
+        }
+        let was_enabled = self.directional_walk_enabled;
+        self.directional_walk_enabled = enabled;
+        if enabled {
+            if !was_enabled {
+                // Do not carry standing integral error into a moving reference.
+                if let Some(robot) = self.robot.as_mut() {
+                    for servo in robot.servos.values_mut() {
+                        servo.integral_error = 0.0;
+                    }
+                }
+                self.walk_measured_speed = 0.0;
+                self.walk_elapsed = 0.0;
+                self.refresh_walk_anchors_from_pose();
+            }
+        } else {
+            if was_enabled {
+                self.walk_phase = 0.0;
+                self.walk_speed = 0.0;
+                self.walk_state_time = 0.0;
+            }
+        }
+    }
+
+    pub fn directional_walk_enabled(&self) -> bool {
+        self.directional_walk_enabled
+    }
+
+    pub fn set_walk_target_speed(&mut self, speed_mps: f32) {
+        if !speed_mps.is_finite() {return;}
+        if speed_mps>0.0 && self.rabbit_runtime.is_some() {
+            let _=self.set_rabbit_nominal_speed(speed_mps.clamp(0.3,1.0));return;
+        }
+        if speed_mps<=0.0 && self.rabbit_runtime.is_some() {self.set_directional_walk_enabled(false);}
+        self.walk_target_speed = speed_mps.clamp(0.0, self.config.walk.max_speed_mps.max(0.1));
+    }
+
+    pub fn walk_target_speed(&self) -> f32 {
+        self.walk_target_speed
+    }
+
+    pub fn walk_config(&self) -> WalkConfig {
+        self.config.walk.clone()
+    }
+
+    pub fn update_walk_config(&mut self, command: WalkConfigCommand) {
+        if let Some(value) = command.nominal_speed_mps {
+            self.config.walk.nominal_speed_mps = value.clamp(0.0, 3.0);
+        }
+        if let Some(value) = command.max_speed_mps {
+            self.config.walk.max_speed_mps = value.clamp(0.1, 4.0);
+        }
+        if let Some(value) = command.max_accel_mps2 {
+            self.config.walk.max_accel_mps2 = value.clamp(0.05, 10.0);
+        }
+        if let Some(value) = command.cycle_frequency_hz {
+            self.config.walk.cycle_frequency_hz = value.clamp(0.2, 6.0);
+        }
+        if let Some(value) = command.max_cycle_frequency_hz {
+            self.config.walk.max_cycle_frequency_hz = value.clamp(0.2, 8.0);
+        }
+        if let Some(value) = command.nominal_step_length_m {
+            self.config.walk.nominal_step_length_m = value.clamp(0.02, 0.8);
+        }
+        if let Some(value) = command.step_length_gain {
+            self.config.walk.step_length_gain = value.clamp(0.0, 1.0);
+        }
+        if let Some(value) = command.nominal_step_height_m {
+            self.config.walk.nominal_step_height_m = value.clamp(0.0, 0.4);
+        }
+        if let Some(value) = command.run_step_height_m {
+            self.config.walk.run_step_height_m = value.clamp(0.0, 0.6);
+        }
+        if let Some(value) = command.stance_duty_factor {
+            self.config.walk.stance_duty_factor = value.clamp(0.50, 0.85);
+        }
+        if let Some(value) = command.torso_pitch_kp {
+            self.config.walk.torso_pitch_kp = value.clamp(0.0, 2.0);
+        }
+        if let Some(value) = command.torso_pitch_kd {
+            self.config.walk.torso_pitch_kd = value.clamp(0.0, 1.0);
+        }
+        if let Some(value) = command.hip_upright_gain {
+            self.config.walk.hip_upright_gain = value.clamp(0.0, 3.0);
+        }
+        if let Some(value) = command.hip_upright_damping {
+            self.config.walk.hip_upright_damping = value.clamp(0.0, 1.0);
+        }
+        if let Some(value) = command.torso_upright_limit_rad {
+            self.config.walk.torso_upright_limit_rad = value.clamp(0.02, 0.5);
+        }
+        if let Some(value) = command.torso_forward_lean_per_speed {
+            self.config.walk.torso_forward_lean_per_speed = value.clamp(0.0, 0.6);
+        }
+        if let Some(value) = command.torso_forward_lean_max_rad {
+            self.config.walk.torso_forward_lean_max_rad = value.clamp(0.0, 0.25);
+        }
+        if let Some(value) = command.velocity_kp {
+            self.config.walk.velocity_kp = value.clamp(0.0, 2.0);
+        }
+        if let Some(value) = command.pelvis_height_target_m {
+            self.config.walk.pelvis_height_target_m = value.clamp(0.4, 1.2);
+        }
+        if let Some(value) = command.stance_foot_spread_m {
+            self.config.walk.stance_foot_spread_m = value.clamp(0.02, 0.5);
+        }
+        if let Some(value) = command.foot_separation_min_m {
+            self.config.walk.foot_separation_min_m = value.clamp(0.02, 0.4);
+        }
+        self.walk_target_speed = self
+            .walk_target_speed
+            .clamp(0.0, self.config.walk.max_speed_mps.max(0.1));
+    }
+
+    pub fn step_for_seconds(&mut self, frame_dt: f32) {
+        self.accumulator += frame_dt.max(0.0);
+        while self.accumulator >= self.dt() {
+            self.step_fixed();
+            self.accumulator -= self.dt();
+        }
+    }
+
+    pub fn step_fixed(&mut self) {
+        if self.paused {
+            return;
+        }
+
+        if self.scene == SceneKind::Robot {
+            self.apply_directional_walk_targets();
+            self.apply_motion_sequence_targets();
+            self.apply_gait_targets();
+            self.apply_rl_residual_targets();
+            self.apply_servo_forces();
+        }
+
+        self.pipeline.step(
+            &self.gravity,
+            &self.integration_parameters,
+            &mut self.island_manager,
+            &mut self.broad_phase,
+            &mut self.narrow_phase,
+            &mut self.bodies,
+            &mut self.colliders,
+            &mut self.impulse_joints,
+            &mut self.multibody_joints,
+            &mut self.ccd_solver,
+            Some(&mut self.query_pipeline),
+            &(),
+            &(),
+        );
+
+        self.update_gait_quality();
+        self.time += self.dt();
+        self.rl_episode_time += self.dt();
+    }
+
+    fn apply_gait_targets(&mut self) {
+        let dt = self.dt();
+        let Some(gait) = &mut self.gait else {
+            return;
+        };
+        if gait.phases.is_empty() {
+            return;
+        }
+
+        gait.elapsed = (gait.elapsed + dt) % gait.cycle_s;
+        let mut elapsed = 0.0;
+        let mut phase_index = 0usize;
+        let mut phase_start = 0.0f32;
+        for (idx, candidate) in gait.phases.iter().enumerate() {
+            let duration = candidate.duration.max(dt);
+            if gait.elapsed <= elapsed + duration {
+                phase_index = idx;
+                phase_start = elapsed;
+                break;
+            }
+            elapsed += duration;
+        }
+        let phase = &gait.phases[phase_index];
+        let duration = phase.duration.max(dt);
+        let alpha = ((gait.elapsed - phase_start) / duration).clamp(0.0, 1.0);
+        let start = if phase_index == 0 {
+            &gait.start_targets
+        } else {
+            &gait.phases[phase_index - 1].joints
+        };
+        let joints = interpolate_joint_map(start, &phase.joints, alpha);
+        let _ = gait;
+        self.apply_pose(PoseCommand { base: None, joints });
+    }
+
+    fn apply_motion_sequence_targets(&mut self) {
+        let dt = self.dt();
+        let Some(sequence) = &mut self.motion_sequence else {
+            return;
+        };
+        if sequence.frames.is_empty() {
+            self.motion_sequence = None;
+            return;
+        }
+
+        sequence.elapsed += dt;
+        let mut elapsed = 0.0f32;
+        let mut phase_index = 0usize;
+        let mut phase_start = 0.0f32;
+        let total_duration: f32 = sequence.frames.iter().map(|frame| frame.duration_s.max(dt)).sum();
+
+        if sequence.elapsed >= total_duration {
+            let final_joints = sequence
+                .frames
+                .last()
+                .map(|frame| frame.joints.clone())
+                .unwrap_or_default();
+            if sequence.loop_enabled {
+                sequence.elapsed = 0.0;
+                sequence.delay_remaining_s = sequence.repeat_delay_s;
+                sequence.start_targets = final_joints.clone();
+            } else {
+                self.motion_sequence = None;
+                self.apply_pose(PoseCommand {
+                    base: None,
+                    joints: final_joints,
+                });
+                return;
+            }
+        }
+
+        if sequence.delay_remaining_s > 0.0 {
+            sequence.delay_remaining_s = (sequence.delay_remaining_s - dt).max(0.0);
+            return;
+        }
+
+        for (idx, frame) in sequence.frames.iter().enumerate() {
+            let duration = frame.duration_s.max(dt);
+            if sequence.elapsed <= elapsed + duration {
+                phase_index = idx;
+                phase_start = elapsed;
+                break;
+            }
+            elapsed += duration;
+        }
+
+        let frame = &sequence.frames[phase_index];
+        let duration = frame.duration_s.max(dt);
+        let alpha = ((sequence.elapsed - phase_start) / duration).clamp(0.0, 1.0);
+        let start = if phase_index == 0 {
+            &sequence.start_targets
+        } else {
+            &sequence.frames[phase_index - 1].joints
+        };
+        let joints = interpolate_joint_map(start, &frame.joints, alpha);
+        let _ = sequence;
+        self.apply_pose(PoseCommand { base: None, joints });
+    }
+
+    /// Select the point-foot virtual-constraint controller without changing physical state.
+    pub fn load_rabbit_trajectory(&mut self,json:&str)->Result<(),String> {
+        if self.scene!=SceneKind::Robot || self.robot_suspended {return Err("RABBIT needs an unsuspended robot scene".into());}
+        if self.rl_target_direction<0.0 {return Err("RABBIT trajectories currently support forward walking only".into());}
+        let trajectory=rabbit::RabbitTrajectory::from_json(json)?;
+        let model=rabbit::RabbitModel::new(&self.config);
+        model.validate_trajectory(&trajectory)?;
+        let startup=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json"))?;
+        model.validate_trajectory(&startup)?;
+        let stance_left=self.foot_world(LegSide::Left).zip(self.foot_world(LegSide::Right))
+            .map(|(l,r)|l[0]>r[0]).unwrap_or(true);
+        self.gait=None;self.motion_sequence=None;self.rl_residual_enabled=false;
+        self.set_directional_walk_enabled(true);
+        self.rabbit_runtime=Some(RabbitRuntime{model,trajectory:startup,goal:Some(trajectory),stance_left,starting:true,preparing:false,stopping:false,elapsed:0.0,steps:0,kick_step:None});
+        Ok(())
+    }
+
+    /// Explicit experiment reset to the optimized orbit, including velocities.
+    /// Never called as recovery or during ordinary walking.
+    pub fn reset_to_rabbit_orbit(&mut self,json:&str)->Result<(),String> {
+        let p=rabbit::RabbitTrajectory::from_json(json)?;
+        rabbit::RabbitModel::new(&self.config).validate_trajectory(&p)?;
+        let q=p.q[0].map(|x|x as f32);let v=p.dq[0].map(|x|x as f32);
+        self.reset_to_rabbit_pose(q,v);
+        self.load_rabbit_trajectory(json)?;
+        let runtime=self.rabbit_runtime.as_mut().unwrap();
+        runtime.stance_left=true;runtime.starting=false;
+        runtime.trajectory=runtime.goal.take().unwrap();
+        Ok(())
+    }
+
+    fn reset_to_rabbit_pose(&mut self,q:[f32;5],v:[f32;5]) {
+        let r=&self.config.robot;let ls=r.shin.length;let lt=r.thigh.length;let lb=r.torso.length;
+        let up=|a:f32,l:f32|vector![-l*a.sin(),l*a.cos()];
+        let dup=|a:f32,l:f32,w:f32|vector![-l*a.cos()*w,-l*a.sin()*w];
+        let knee=up(q[0],ls);let hip=knee+up(q[1],lt);let swing_knee=hip-up(q[3],lt);
+        let vk=dup(q[0],ls,v[0]);let vh=vk+dup(q[1],lt,v[1]);let vsk=vh-dup(q[3],lt,v[3]);
+        let mut pos=[knee*0.5,(knee+hip)*0.5,hip+up(q[2],lb*0.5),
+            (hip+swing_knee)*0.5,swing_knee-up(q[4],ls*0.5)];
+        let vel=[vk*0.5,(vk+vh)*0.5,vh+dup(q[2],lb*0.5,v[2]),
+            (vh+vsk)*0.5,vsk-dup(q[4],ls*0.5,v[4])];
+        let lengths=[ls,lt,lb,lt,ls];let widths=[r.shin.width,r.thigh.width,r.torso.width,r.thigh.width,r.shin.width];
+        let clearance=(0..5).map(|i|0.5*(lengths[i]*q[i].cos().abs()+widths[i]*q[i].sin().abs())-pos[i].y)
+            .fold(0.0_f32,f32::max)+0.0001;
+        for point in &mut pos {point.y+=clearance;}
+        let pose=|i:usize|BodyPoseConfig{x:pos[i].x,y:pos[i].y,angle:q[i]};
+        let mut config=self.config.clone();
+        config.robot.initial_pose=InitialPoseConfig{left_shin:pose(0),left_thigh:pose(1),torso:pose(2),right_thigh:pose(3),right_shin:pose(4)};
+        config.servo.initial_targets=JointAnglesConfig{left_hip:q[1]-q[2],left_knee:q[0]-q[1],right_hip:q[3]-q[2],right_knee:q[4]-q[3]};
+        let canonical=self.canonical_initial_pose.clone();let targets=self.canonical_initial_targets;
+        let mut next=Self::from_config(config);let robot=next.robot.as_ref().unwrap();
+        for (i,handle) in [robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin].iter().enumerate() {
+            next.bodies[*handle].set_linvel(vel[i],true);next.bodies[*handle].set_angvel(v[i],true);
+        }
+        next.canonical_initial_pose=canonical.clone();next.canonical_initial_targets=targets;
+        next.config.robot.initial_pose=canonical;next.config.servo.initial_targets=targets;
+        *self=next;
+    }
+
+    /// Initialize a two-phase running experiment on its optimized stance orbit.
+    pub fn reset_to_rabbit_running_orbit(&mut self,json:&str)->Result<(),String> {
+        self.reset_to_rabbit_running_orbit_with_lean(json,0.0)
+    }
+
+    pub fn reset_to_rabbit_running_orbit_with_lean(&mut self,json:&str,initial_lean:f32)->Result<(),String> {
+        self.reset_to_rabbit_running_pose(json,initial_lean,1.0)
+    }
+
+    /// Start the optimized running stance pose without giving the robot orbit velocity.
+    pub fn reset_to_rabbit_running_stance_from_rest(&mut self,json:&str,initial_lean:f32)->Result<(),String> {
+        self.reset_to_rabbit_running_pose(json,initial_lean,0.0)
+    }
+
+    fn reset_to_rabbit_running_pose(&mut self,json:&str,initial_lean:f32,velocity_scale:f32)->Result<(),String> {
+        self.reset_to_rabbit_running_pose_custom(json,initial_lean,velocity_scale,None)
+    }
+
+    pub fn reset_to_rabbit_running_custom_state(&mut self,json:&str,initial_lean:f32,velocity_scale:f32,start:&running_env::RabbitStartState)->Result<(),String> {
+        start.validate()?;
+        self.reset_to_rabbit_running_pose_custom(json,initial_lean,velocity_scale,Some(start))
+    }
+
+    fn reset_to_rabbit_running_pose_custom(&mut self,json:&str,initial_lean:f32,velocity_scale:f32,start:Option<&running_env::RabbitStartState>)->Result<(),String> {
+        if self.scene!=SceneKind::Robot || self.robot_suspended {
+            return Err("running needs an unsuspended robot scene".into());
+        }
+        if !initial_lean.is_finite() || !(0.0..=0.3).contains(&initial_lean) {
+            return Err("initial running lean must be in 0..0.3 rad".into());
+        }
+        let plan=rabbit::RabbitRunningPlan::from_json(json)?;
+        let stance=plan.stance_trajectory();
+        let mut q=plan.stance.q[0].map(|x|x as f32);
+        q[2]-=initial_lean;
+        let mut v=plan.stance.dq[0].map(|x|x as f32*velocity_scale);
+        if let Some(start)=start {
+            for i in 0..5 { q[i]+=start.q_offsets_rad[i];v[i]+=start.angular_velocity_rad_s[i]; }
+        }
+        self.reset_to_rabbit_pose(q,v);
+        self.enable_running_point_feet();
+        // The generic pose reset clears the rectangular shin collider. Running
+        // disables that ground contact and uses a small ball at the shin tip;
+        // place that ball on the ground before starting the stance orbit.
+        let stance_tip_y=self.foot_world(LegSide::Left).unwrap()[1];
+        if stance_tip_y>2.0*RUNNING_POINT_FOOT_RADIUS_M {
+            let shift_y=stance_tip_y-RUNNING_POINT_FOOT_RADIUS_M;
+            let robot=self.robot.as_ref().unwrap();
+            let handles=[robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin];
+            for handle in handles {
+                let position=*self.bodies[handle].translation();
+                self.bodies[handle].set_translation(position-vector![0.0,shift_y],true);
+            }
+        }
+        self.gait=None;self.motion_sequence=None;self.rl_residual_enabled=false;
+        self.directional_walk_enabled=true;
+        let mut stance_left=true;
+        if let Some(start)=start {
+            let ly=self.foot_world(LegSide::Left).unwrap()[1];
+            let ry=self.foot_world(LegSide::Right).unwrap()[1];
+            stance_left=ly<=ry;
+            let shift=RUNNING_POINT_FOOT_RADIUS_M-ly.min(ry);
+            let robot=self.robot.as_ref().unwrap();
+            for handle in [robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin] {
+                let body=&mut self.bodies[handle];
+                body.set_translation(*body.translation()+vector![0.0,shift],true);
+                body.set_linvel(*body.linvel()+vector![start.linear_velocity_mps[0],start.linear_velocity_mps[1]],true);
+            }
+        }
+        self.rabbit_running=Some(RabbitRunningRuntime{
+            recovery:rabbit_recovery::RecoveryStatus::default(),
+            startup_elapsed:0.0,startup_q_error:None,startup_v_error:[0.0;5],
+            model:rabbit::RabbitModel::new(&self.config),plan,stance,
+            stance_left,phase:RabbitRunPhase::Stance,elapsed:0.0,steps:0,no_contact_ticks:0,
+            lean_offset:self.rabbit_adaptive_lean.map_or(0.0,|feedback|feedback.0),
+            target_pitch:q[2] as f64,
+        });
+        Ok(())
+    }
+
+    fn enable_running_point_feet(&mut self) {
+        let Some(robot)=self.robot.as_ref() else {return;};
+        let old=[robot.left_shin_collider,robot.right_shin_collider];
+        let parents=[robot.left_shin,robot.right_shin];
+        for (i,handle) in old.into_iter().enumerate() {
+            let membership=if i==0 {GROUP_LEFT_LEG}else{GROUP_RIGHT_LEG};
+            self.colliders[handle].set_collision_groups(InteractionGroups::new(
+                membership,membership | GROUP_BALL | GROUP_ENVIRONMENT));
+        }
+        let radius=RUNNING_POINT_FOOT_RADIUS_M;
+        let tip=-self.config.robot.shin.length*0.5;
+        let mut feet=[old[0],old[1]];
+        for (i,parent) in parents.into_iter().enumerate() {
+            let membership=if i==0 {GROUP_LEFT_LEG}else{GROUP_RIGHT_LEG};
+            feet[i]=self.colliders.insert_with_parent(
+                ColliderBuilder::ball(radius)
+                    .translation(vector![0.0,tip])
+                    .collision_groups(InteractionGroups::new(membership,GROUP_GROUND | GROUP_BALL))
+                    .density(0.0).friction(self.config.robot.shin.friction)
+                    .restitution(0.0).build(),parent,&mut self.bodies);
+        }
+        let robot=self.robot.as_mut().unwrap();
+        robot.left_shin_collider=feet[0];robot.right_shin_collider=feet[1];
+    }
+
+    pub fn set_rabbit_running_flight_reference(&mut self, reference: Option<rabbit::RabbitReferenceTable>) -> Result<(),String> {
+        if let Some(table)=reference.as_ref() { table.validate()?; }
+        self.rabbit_running_flight_reference=reference;
+        Ok(())
+    }
+
+    pub fn set_rabbit_running_first_flight_reference(&mut self, reference: Option<rabbit::RabbitReferenceTable>) -> Result<(),String> {
+        if let Some(table)=reference.as_ref() { table.validate()?; }
+        self.rabbit_running_first_flight_reference=reference;
+        Ok(())
+    }
+
+    pub fn set_rabbit_first_takeoff_clearance(&mut self, clearance: f32) -> Result<(),String> {
+        if !clearance.is_finite() || !(0.0..=0.1).contains(&clearance) {
+            return Err("first takeoff clearance must be 0..0.1 m".into());
+        }
+        self.rabbit_first_takeoff_clearance_m=clearance;
+        Ok(())
+    }
+
+    /// Experimental pacing of the flight reference relative to measured contact time.
+    pub fn set_rabbit_running_flight_time_scale(&mut self, scale: f64) -> Result<(), String> {
+        if !scale.is_finite() || !(0.5..=2.0).contains(&scale) {
+            return Err("running flight time scale must be finite and 0.5..2.0".into());
+        }
+        self.rabbit_running_flight_time_scale = scale;
+        Ok(())
+    }
+
+    pub fn set_rabbit_running_stance_gains(&mut self, gains: Option<(f64,f64)>) -> Result<(),String> {
+        if let Some((kp,kd))=gains {
+            if !kp.is_finite() || !kd.is_finite() || !(0.0..=500.0).contains(&kp) || !(0.0..=50.0).contains(&kd) {
+                return Err("running stance gains must be finite and nonnegative".into());
+            }
+        }
+        self.rabbit_running_stance_gains=gains;
+        Ok(())
+    }
+
+    pub fn set_rabbit_startup_blend(&mut self, seconds:f64)->Result<(),String> {
+        if !seconds.is_finite() || !(0.0..=2.0).contains(&seconds) {return Err("startup blend must be 0..2 s".into());}
+        self.rabbit_startup_blend_s=seconds;Ok(())
+    }
+
+    pub fn set_rabbit_stance_phase_feedback(&mut self,blend:f64)->Result<(),String> {
+        if !blend.is_finite() || !(0.0..=1.0).contains(&blend) {return Err("stance phase feedback must be 0..1".into());}
+        self.rabbit_stance_phase_feedback=blend;Ok(())
+    }
+
+    pub fn set_rabbit_knp_phase_table(&mut self,table:Option<rabbit::RabbitLeanSensorTable>)->Result<(),String> {
+        if let Some(table)=table.as_ref() {table.validate()?;}
+        self.rabbit_knp_phase_sensor_table=table;Ok(())
+    }
+
+    /// Position-target corrections, never direct motor torques.
+    pub fn set_rabbit_target_residual(&mut self, joints:[f64;4],lean:f64)->Result<(),String> {
+        if joints.iter().any(|v|!v.is_finite() || v.abs()>0.35) || !lean.is_finite() || lean.abs()>0.15 {
+            return Err("residual joint targets must be within 0.35 rad, lean within 0.15 rad".into());
+        }
+        self.rabbit_reference_residual=joints;self.rabbit_lean_residual=lean;Ok(())
+    }
+
+    pub fn apply_robot_impulse(&mut self,impulse:[f32;2])->Result<(),String> {
+        if impulse.iter().any(|x|!x.is_finite() || x.abs()>10.0) {return Err("torso impulse must be finite and within 10 N s per axis".into());}
+        let robot=self.robot.as_ref().ok_or("no robot")?;
+        self.bodies[robot.torso].apply_impulse(vector![impulse[0],impulse[1]],true);
+        Ok(())
+    }
+
+    fn blend_running_entry(&self,runtime:&mut RabbitRunningRuntime,q:&nalgebra::SVector<f64,5>,v:&nalgebra::SVector<f64,5>,target_q:&mut nalgebra::SVector<f64,5>,target_v:&mut nalgebra::SVector<f64,5>) {
+        let duration=self.rabbit_startup_blend_s;
+        let elapsed=(runtime.startup_elapsed-self.dt() as f64).max(0.0);
+        if duration<=0.0 || elapsed>=duration {return;}
+        let error=runtime.startup_q_error.get_or_insert_with(||std::array::from_fn(|i|q[i]-target_q[i]));
+        if elapsed<=1e-8 {runtime.startup_v_error=std::array::from_fn(|i|v[i]-target_v[i]);}
+        for i in 0..5 {
+            let (position,velocity)=rabbit::entry_correction(error[i],runtime.startup_v_error[i],elapsed,duration);
+            target_q[i]+=position;target_v[i]+=velocity;
+        }
+    }
+
+    /// Experimental task-space lift of the non-support toe in running stance.
+    /// The KNP/RABBIT reference still supplies the baseline joint trajectory.
+    pub fn set_rabbit_stance_swing_clearance(
+        &mut self, feedback: Option<(f64,f64,f64,f64)>
+    ) -> Result<(),String> {
+        if let Some((height,blend,start,end))=feedback {
+            if ![height,blend,start,end].iter().all(|v|v.is_finite())
+                || !(0.0..=0.15).contains(&height)
+                || !(0.0..=1.0).contains(&blend)
+                || !(0.0..1.0).contains(&start)
+                || !(start..=1.0).contains(&end) || end<=start {
+                return Err("stance swing clearance requires height 0..0.15 m, blend 0..1 and 0 <= start < end <= 1".into());
+            }
+        }
+        self.rabbit_stance_swing_clearance=feedback;
+        Ok(())
+    }
+
+    pub fn set_rabbit_running_speed_feedback(&mut self, feedback: Option<(f64,f64)>) -> Result<(),String> {
+        if let Some((target,gain))=feedback {
+            if !target.is_finite() || !gain.is_finite() || !(0.0..=3.0).contains(&target) || gain.abs()>5.0 {
+                return Err("running speed feedback requires target 0..3 m/s and |gain| <= 5".into());
+            }
+        }
+        self.rabbit_running_speed_feedback=feedback;
+        Ok(())
+    }
+
+    /// Offset the KNP absolute torso-angle reference using measured forward speed,
+    /// pitch, and angular velocity. Positive offsets lean the torso forward.
+    pub fn set_rabbit_adaptive_lean(&mut self, feedback: Option<(f64,f64,f64,f64,f64,f64)>) -> Result<(),String> {
+        if let Some((base,gain,reference_speed,min,max,recovery))=feedback {
+            if ![base,gain,reference_speed,min,max,recovery].iter().all(|v|v.is_finite())
+                || !(0.0..=0.35).contains(&base) || gain.abs()>0.5
+                || !(0.0..=4.0).contains(&reference_speed)
+                || min<0.0 || min>base || max<base || max>0.4
+                || !(0.0..=2.0).contains(&recovery) {
+                return Err("invalid adaptive running lean parameters".into());
+            }
+            if let Some(runtime)=self.rabbit_running.as_mut() {runtime.lean_offset=base;}
+        }
+        self.rabbit_adaptive_lean=feedback;
+        Ok(())
+    }
+
+    pub fn set_rabbit_knp_lean_table(&mut self, table: Option<rabbit::RabbitLeanTable>) -> Result<(),String> {
+        if let Some(value)=table.as_ref() {
+            value.validate()?;
+            if let Some(robot)=self.robot.as_ref() {
+                let torso=&self.bodies[robot.torso];
+                let pitch=torso.rotation().angle() as f64;
+                let omega=torso.angvel() as f64;
+                let danger=(-pitch-0.45).max(0.0)+0.05*(-omega-1.0).max(0.0);
+                if let Some(runtime)=self.rabbit_running.as_mut() {
+                    runtime.lean_offset=value.sample(torso.linvel().x as f64,danger);
+                }
+            }
+        }
+        self.rabbit_knp_lean_table=table;
+        Ok(())
+    }
+
+    pub fn set_rabbit_knp_lean_sensor_table(&mut self, table: Option<rabbit::RabbitLeanSensorTable>) -> Result<(),String> {
+        if let Some(value)=table.as_ref() {
+            value.validate()?;
+            if let Some(robot)=self.robot.as_ref() {
+                let torso=&self.bodies[robot.torso];
+                if let Some(runtime)=self.rabbit_running.as_mut() {
+                    runtime.lean_offset=value.sample(torso.linvel().x as f64,
+                        torso.rotation().angle() as f64,torso.angvel() as f64);
+                }
+            }
+        }
+        self.rabbit_knp_lean_sensor_table=table;
+        Ok(())
+    }
+
+    pub fn set_physics_dt(&mut self, dt:f32) -> Result<(),String> {
+        if !dt.is_finite() || !(1.0/1000.0..=1.0/60.0).contains(&dt) {
+            return Err("physics dt must be finite and between 1/1000 and 1/60 s".into());
+        }
+        self.config.physics.dt=dt;
+        self.integration_parameters.dt=dt;
+        Ok(())
+    }
+
+    /// Change the nominal point-foot orbit speed; transitions occur at touchdown.
+    /// Actual Rapier speed is measured separately because contact geometry differs.
+    pub fn set_rabbit_nominal_speed(&mut self,speed:f32)->Result<(),String> {
+        if !speed.is_finite() || !(0.3..=1.0).contains(&speed) {
+            return Err("planned nominal speed must be between 0.3 and 1.0 m/s".into());
+        }
+        let slow=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-030.json"))?;
+        let fast=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-050.json"))?;
+        let runtime=self.rabbit_runtime.as_mut().ok_or("RABBIT controller is not enabled")?;
+        runtime.goal=Some(if speed>0.6 {
+            let higher=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-060-high.json"))?;
+            let fastest=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-25cm-100-high.json"))?;
+            if speed>=1.0 {fastest} else {higher.blend(&fastest,((speed-0.6)/0.4) as f64)}
+        } else if speed>0.5 {
+            let higher=rabbit::RabbitTrajectory::from_json(include_str!("../../motions/rabbit-20cm-060-high.json"))?;
+            fast.blend(&higher,((speed-0.5)/0.1) as f64)
+        } else {slow.blend(&fast,((speed-0.3)/0.2) as f64)});
+        self.walk_target_speed=speed;Ok(())
+    }
+
+    /// Start or resume the fast profile from the current physical pose.
+    pub fn start_automatic_walk(&mut self) -> Result<(), String> {
+        if self.state().base.is_some_and(|b| b.y<1.0 || b.angle.abs()>0.7) {
+            return Err("Robot has fallen: press R to reset before starting".into());
+        }
+        self.set_target_direction(1.0);
+        if self.rabbit_runtime.is_none() {
+            self.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json"))?;
+            let runtime=self.rabbit_runtime.as_mut().unwrap();
+            runtime.preparing=true;
+            // Settle the initial stance before leaning; a click may arrive at
+            // any phase of the small standing oscillation.
+            runtime.elapsed=-1.0;
+        }
+        self.set_rabbit_nominal_speed(1.0)?;
+        self.set_directional_walk_enabled(true);
+        self.resume();
+        Ok(())
+    }
+
+    /// Start a pipeline candidate through the same settling/startup as the official gait.
+    pub fn start_automatic_walk_with_trajectory(&mut self, json: &str) -> Result<(), String> {
+        let trajectory = rabbit::RabbitTrajectory::from_json(json)?;
+        rabbit::RabbitModel::new(&self.config).validate_trajectory(&trajectory)?;
+        self.start_automatic_walk()?;
+        self.load_rabbit_trajectory(json)?;
+        let runtime = self.rabbit_runtime.as_mut().unwrap();
+        runtime.preparing = true;
+        runtime.elapsed = -1.0;
+        self.walk_target_speed = trajectory.speed_mps as f32;
+        Ok(())
+    }
+
+    pub fn disable_rabbit_controller(&mut self) {
+        self.set_directional_walk_enabled(false);
+    }
+
+    pub fn transition_running_to_walking_brake(&mut self) -> Result<(),String> {
+        if self.rabbit_running.is_none() {return Err("running controller is not active".into());}
+        self.rabbit_running=None;
+        self.load_rabbit_trajectory(include_str!("../../motions/rabbit-20cm-030.json"))?;
+        self.disable_rabbit_controller();
+        Ok(())
+    }
+
+
+
+    pub fn set_rabbit_recovery(&mut self,grace_s:f32,policy:Option<rabbit_recovery::RecoveryPolicy>)->Result<(),String> {
+        if !grace_s.is_finite() || !(0.0..=30.0).contains(&grace_s) {return Err("recovery grace must be 0..30 seconds".into());}
+        if let Some(p)=policy.as_ref() {p.validate()?;}
+        self.rabbit_recovery_grace_s=grace_s;
+        self.rabbit_recovery_policy=policy;
+        Ok(())
+    }
+
+    pub fn rabbit_recovery_status(&self)->rabbit_recovery::RecoveryStatus {
+        self.rabbit_running.as_ref().map_or_else(Default::default,|r|r.recovery)
+    }
+
+    pub fn set_rabbit_recovery_pd(&mut self,gains:Option<[f32;2]>)->Result<(),String> {
+        let [kp,kd]=gains.unwrap_or([30.0,1.5]);
+        if !kp.is_finite() || !(1.0..=100.0).contains(&kp)
+            || !kd.is_finite() || !(0.01..=5.0).contains(&kd) {
+            return Err("recovery PD gains must be finite: kp 1..100, kd 0.01..5".into());
+        }
+        self.rabbit_recovery_pd=[kp,kd];
+        Ok(())
+    }
+
+    pub fn set_rabbit_recovery_motion(&mut self,motion:Option<rabbit_recovery::RecoveryMotion>)->Result<(),String> {
+        if let Some(m)=motion.as_ref() {m.validate()?;}
+        self.rabbit_recovery_motion=motion;
+        Ok(())
+    }
+
+    pub fn rabbit_episode_failed(&self)->bool {
+        let Some(robot)=self.robot.as_ref() else {return true;};
+        let torso=&self.bodies[robot.torso];
+        if !torso.translation().iter().chain(torso.linvel().iter()).all(|v|v.is_finite()) || !torso.rotation().angle().is_finite() {return true;}
+        if self.rabbit_recovery_grace_s>0.0 {self.rabbit_recovery_status().exhausted}
+        else {torso.translation().y<0.7 || torso.rotation().angle().abs()>1.0}
+    }
+
+    fn apply_running_recovery(&mut self,runtime:&mut RabbitRunningRuntime) {
+        let dt=self.dt();
+        if !runtime.recovery.active {
+            runtime.recovery.active=true;
+            runtime.recovery.elapsed_s=0.0;
+            runtime.recovery.stable_s=0.0;
+            runtime.recovery.fall_events+=1;
+        }
+        runtime.recovery.elapsed_s+=dt;
+        let robot=self.robot.as_ref().unwrap();
+        let torso=&self.bodies[robot.torso];
+        let (height,pitch,omega)=(torso.translation().y,torso.rotation().angle(),torso.angvel());
+        let targets=self.rabbit_recovery_policy.as_ref().map_or_else(
+            ||rabbit_recovery::seed_targets(height as f64,pitch as f64,omega as f64),
+            |p|p.sample(height as f64,pitch as f64,omega as f64));
+        let targets=self.rabbit_recovery_motion.as_ref()
+            .filter(|m|runtime.recovery.elapsed_s as f64>=m.start_after_s).map_or(
+            [targets[0],targets[1],targets[0],targets[1]],
+            |m|m.sample(runtime.recovery.elapsed_s as f64-m.start_after_s,pitch as f64,omega as f64));
+        let stable=height>0.95 && pitch.abs()<0.35 && omega.abs()<1.5
+            && torso.linvel().y.abs()<0.8 && torso.linvel().x.abs()<1.5
+            && (self.foot_contact(true) || self.foot_contact(false));
+        runtime.recovery.stable_s=if stable {runtime.recovery.stable_s+dt}else{0.0};
+        let robot=self.robot.as_mut().unwrap();
+        for (i,name) in [JointName::LeftHip,JointName::LeftKnee,JointName::RightHip,JointName::RightKnee].iter().enumerate() {
+            let servo=robot.servos.get_mut(name).unwrap();
+            let target=(targets[i]+self.rabbit_reference_residual[i]).clamp(-2.8,2.8) as f32;
+            let angle=normalize_angle(self.bodies[servo.child].rotation().angle()-self.bodies[servo.parent].rotation().angle());
+            let velocity=self.bodies[servo.child].angvel()-self.bodies[servo.parent].angvel();
+            // Motor impulses act in equal and opposite pairs; no world-space assistance.
+            let [kp,kd]=self.rabbit_recovery_pd;
+            let mut torque=(kp*normalize_angle(target-angle)-kd*velocity).clamp(-self.servo_max_torque,self.servo_max_torque);
+            if velocity.abs()>self.servo_max_speed_rad_s && torque*velocity>0.0 {torque=0.0;}
+            servo.last_torque=torque;servo.target=target;servo.commanded_target=target;servo.integral_error=0.0;
+            self.bodies[servo.parent].apply_torque_impulse(-torque*dt,true);
+            self.bodies[servo.child].apply_torque_impulse(torque*dt,true);
+        }
+        if runtime.recovery.stable_s>=0.3 {
+            runtime.recovery.active=false;runtime.recovery.recoveries+=1;
+            runtime.phase=RabbitRunPhase::Stance;runtime.no_contact_ticks=0;
+            let left=self.foot_world(LegSide::Left).unwrap();let right=self.foot_world(LegSide::Right).unwrap();
+            runtime.stance_left=if self.foot_contact(true)!=self.foot_contact(false) {self.foot_contact(true)}else{left[0]>=right[0]};
+            let robot=self.robot.as_ref().unwrap();
+            let handles=if runtime.stance_left {[robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]}else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+            let q=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64);
+            runtime.elapsed=(runtime.model.phase(&q,&runtime.stance).clamp(0.0,0.95)*runtime.plan.stance_time_s) as f32;
+            runtime.startup_elapsed=0.0;runtime.startup_q_error=None;
+        }else if runtime.recovery.elapsed_s>=self.rabbit_recovery_grace_s {
+            runtime.recovery.exhausted=true;
+        }
+    }
+
+    fn apply_rabbit_running_forces(&mut self)->bool {
+        let Some(mut runtime)=self.rabbit_running.take() else { return false; };
+        if !self.directional_walk_enabled {
+            self.rabbit_running=Some(runtime);return false;
+        }
+        let Some(robot)=self.robot.as_ref() else {return false;};
+        let torso=&self.bodies[robot.torso];
+        let unstable=torso.translation().y<0.7 || torso.rotation().angle().abs()>1.0 || runtime.elapsed>2.0;
+        if self.rabbit_recovery_grace_s>0.0 && (unstable || runtime.recovery.active) {
+            self.apply_running_recovery(&mut runtime);
+            self.rabbit_running=Some(runtime);
+            return true;
+        }
+        if torso.translation().y<0.7 || torso.rotation().angle().abs()>1.0 {
+            self.directional_walk_enabled=false;
+            self.rabbit_running=Some(runtime);return false;
+        }
+        let left_contact=self.foot_contact(true);
+        let right_contact=self.foot_contact(false);
+        runtime.elapsed+=self.dt();
+        runtime.startup_elapsed+=self.dt() as f64;
+        if runtime.phase==RabbitRunPhase::Stance {
+            runtime.no_contact_ticks=if !left_contact && !right_contact {runtime.no_contact_ticks.saturating_add(1)}else{0};
+            let stance_foot_clear = runtime.steps > 0 || self.foot_world(if runtime.stance_left {LegSide::Left}else{LegSide::Right})
+                .is_some_and(|foot| foot[1] >= self.rabbit_first_takeoff_clearance_m);
+            if runtime.no_contact_ticks>=3 && runtime.elapsed>0.03 && stance_foot_clear {
+                runtime.phase=RabbitRunPhase::Flight;
+                runtime.elapsed=runtime.no_contact_ticks as f32*self.dt();
+                runtime.no_contact_ticks=0;
+            }
+        } else if runtime.phase==RabbitRunPhase::Flight {
+            let old=self.foot_world(if runtime.stance_left {LegSide::Left}else{LegSide::Right}).unwrap();
+            let new=self.foot_world(if runtime.stance_left {LegSide::Right}else{LegSide::Left}).unwrap();
+            if new[0]>old[0]+0.04 && (if runtime.stance_left {right_contact}else{left_contact}) {
+                runtime.stance_left=!runtime.stance_left;
+                if let Some(error)=runtime.startup_q_error.as_mut() {error.swap(0,4);error.swap(1,3);}
+                runtime.startup_v_error.swap(0,4);runtime.startup_v_error.swap(1,3);
+                runtime.phase=RabbitRunPhase::Stance;runtime.elapsed=0.0;runtime.steps+=1;
+            } else if runtime.elapsed<0.06 && (if runtime.stance_left {left_contact}else{right_contact}) {
+                runtime.phase=RabbitRunPhase::Stance;
+                runtime.elapsed=runtime.plan.stance_time_s as f32;
+            }
+        }
+        if runtime.elapsed>2.0 {
+            self.directional_walk_enabled=false;
+            self.rabbit_running=Some(runtime);return false;
+        }
+        let handles=if runtime.stance_left {
+            [robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]
+        }else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+        let q=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64);
+        let v=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].angvel() as f64);
+        if self.rabbit_adaptive_lean.is_some() || self.rabbit_knp_lean_table.is_some()
+            || self.rabbit_knp_lean_sensor_table.is_some() {
+            let speed=torso.linvel().x as f64;
+            let pitch=torso.rotation().angle() as f64;
+            let angular_speed=torso.angvel() as f64;
+            let danger=(-pitch-0.45).max(0.0)+0.05*(-angular_speed-1.0).max(0.0);
+            let mut goal=if let Some(table)=self.rabbit_knp_lean_sensor_table.as_ref() {
+                table.sample(speed,pitch,angular_speed)
+            }else if let Some(table)=self.rabbit_knp_lean_table.as_ref() {
+                table.sample(speed,danger)
+            }else{
+                let (base,gain,reference_speed,min,max,recovery)=self.rabbit_adaptive_lean.unwrap();
+                (base+gain*(speed-reference_speed)-recovery*danger).clamp(min,max)
+            };
+            if self.rabbit_lean_residual!=0.0 {goal=(goal+self.rabbit_lean_residual).clamp(0.0,0.4);}
+            let alpha=(self.dt() as f64/(0.12+self.dt() as f64)).clamp(0.0,1.0);
+            runtime.lean_offset+=alpha*(goal-runtime.lean_offset);
+        }
+        let residual=if runtime.stance_left {self.rabbit_reference_residual}
+            else {[self.rabbit_reference_residual[2],self.rabbit_reference_residual[3],self.rabbit_reference_residual[0],self.rabbit_reference_residual[1]]};
+        let (torques,reference)=if runtime.phase==RabbitRunPhase::Stance {
+            let reference=self.rabbit_virtual_reference.as_ref().map(|(table,mix)|(table,*mix as f64));
+            let phase=if self.rabbit_running_stance_gains.is_some() {
+                let clock=(runtime.elapsed as f64/runtime.plan.stance_time_s).clamp(0.0,1.0);
+                let mut blend=self.rabbit_knp_phase_sensor_table.as_ref().map_or(self.rabbit_stance_phase_feedback,|table|
+                    ((table.sample(torso.linvel().x as f64,torso.rotation().angle() as f64,torso.angvel() as f64)-0.05)/0.35).clamp(0.0,1.0));
+                // The KNP weight representation is f32: preserve exact endpoint controllers.
+                if blend<1e-5 {blend=0.0;} else if blend>1.0-1e-5 {blend=1.0;}
+                if blend>0.0 {
+                    clock*(1.0-blend)+runtime.model.phase(&q,&runtime.stance)*blend
+                } else {clock}
+            }else{runtime.model.phase(&q,&runtime.stance)};
+            let (mut target_q,mut target_v,feedforward)=runtime.stance.sample(phase);
+            if let Some((table,mix))=reference {
+                let (knp_q,knp_v,_)=table.sample(phase);
+                target_q=target_q*(1.0-mix)+knp_q*mix;
+                target_v=target_v*(1.0-mix)+knp_v*mix;
+            }
+            if let Some((height,blend,start,end))=self.rabbit_stance_swing_clearance {
+                if phase>=start && phase<=end {
+                    let swing=if runtime.stance_left {LegSide::Right}else{LegSide::Left};
+                    if let (Some(hip),Some(foot))=(self.pelvis_world(),self.foot_world(swing)) {
+                        if (foot[1] as f64)<height {
+                            let dx=foot[0] as f64-hip[0] as f64;
+                            let dy=height-hip[1] as f64;
+                            let thigh=self.config.robot.thigh.length as f64;
+                            let shin=self.config.robot.shin.length as f64;
+                            let distance=(dx*dx+dy*dy).sqrt();
+                            if distance>=(thigh-shin).abs()+0.01
+                                && distance<=thigh+shin-0.005 {
+                                let direction=dx.atan2(-dy);
+                                let bend=((thigh*thigh+distance*distance-shin*shin)
+                                    /(2.0*thigh*distance)).clamp(-1.0,1.0).acos();
+                                let solution=|sign:f64| {
+                                    let upper=direction+sign*bend;
+                                    let lower=(dx-thigh*upper.sin())
+                                        .atan2(-(dy+thigh*upper.cos()));
+                                    (upper,lower)
+                                };
+                                let positive=solution(1.0);
+                                let negative=solution(-1.0);
+                                let error=|candidate:(f64,f64)| {
+                                    (candidate.0-target_q[3]).powi(2)
+                                        +(candidate.1-target_q[4]).powi(2)
+                                };
+                                let (upper,lower)=if error(positive)<=error(negative) {
+                                    positive
+                                }else{negative};
+                                let rise=((phase-start)/0.1).clamp(0.0,1.0);
+                                let fall=((end-phase)/0.1).clamp(0.0,1.0);
+                                let weight=blend*rise*fall;
+                                target_q[3]+=weight*(upper-target_q[3]);
+                                target_q[4]+=weight*(lower-target_q[4]);
+                            }
+                        }
+                    }
+                }
+            }
+            target_q[2]-=runtime.lean_offset;
+            self.blend_running_entry(&mut runtime,&q,&v,&mut target_q,&mut target_v);
+            runtime.target_pitch=target_q[2];
+            let mut torques=if let Some((kp,kd))=self.rabbit_running_stance_gains {
+                feedforward+kp*(runtime.model.b.transpose()*(target_q-q)+nalgebra::SVector::<f64,4>::from_row_slice(&residual))
+                    +kd*(runtime.model.b.transpose()*(target_v-v))
+            }else{
+                let Some(u)=runtime.model.control_with_reference(&q,&v,&runtime.stance,250.0,15.0,reference) else {
+                    self.directional_walk_enabled=false;
+                    self.rabbit_running=Some(runtime);return false;
+                };u
+            };
+            if let Some((amplitude,start,end))=self.rabbit_stance_push {
+                let scheduled=self.rabbit_stance_push_period.map_or(true,|(every,offset)|runtime.steps%every==offset);
+                if scheduled && phase>=start && phase<=end {torques[1]+=amplitude as f64;}
+            }
+            if let Some((target,gain))=self.rabbit_running_speed_feedback {
+                if (0.2..=0.8).contains(&phase) {
+                    torques[1]+=(gain*(target-torso.linvel().x as f64)).clamp(-2.0,2.0);
+                }
+            }
+            (torques,runtime.model.b.transpose()*target_q+nalgebra::SVector::<f64,4>::from_row_slice(&residual))
+        }else{
+            let phase=(runtime.elapsed as f64/(runtime.plan.flight_time_s*self.rabbit_running_flight_time_scale)).clamp(0.0,1.0);
+            let (flight_q,flight_v,feedforward)=runtime.plan.sample_flight(phase);
+            let mut target_q=flight_q.fixed_rows::<5>(0).into_owned();
+            let mut target_v=flight_v.fixed_rows::<5>(0).into_owned();
+            let flight_reference = if runtime.steps == 0 {
+                self.rabbit_running_first_flight_reference.as_ref()
+                    .or(self.rabbit_running_flight_reference.as_ref())
+            } else {
+                self.rabbit_running_flight_reference.as_ref()
+            };
+            if let Some(table)=flight_reference {
+                let (knp_q,knp_v,_)=table.sample(phase);
+                target_q=knp_q;target_v=knp_v;
+            }
+            target_q[2]-=runtime.lean_offset;
+            self.blend_running_entry(&mut runtime,&q,&v,&mut target_q,&mut target_v);
+            runtime.target_pitch=target_q[2];
+            if let Some((offset,lookahead,blend,start))=self.rabbit_flight_com_ik {
+                if let (Some(hip),Some(com))=(self.pelvis_world(),self.robot_center_of_mass()) {
+                    let remaining=(runtime.plan.flight_time_s-runtime.elapsed as f64).max(0.0);
+                    let toe_x=com[0] as f64+lookahead*torso.linvel().x as f64*remaining+offset;
+                    let toe_y=0.02+0.08*(1.0-phase);
+                    let dx=toe_x-hip[0] as f64;
+                    let dy=toe_y-hip[1] as f64;
+                    let thigh=self.config.robot.thigh.length as f64;
+                    let shin=self.config.robot.shin.length as f64;
+                    let distance=(dx*dx+dy*dy).sqrt();
+                    if distance>=(thigh-shin).abs()+0.01 && distance<=thigh+shin-0.005 {
+                        let direction=dx.atan2(-dy);
+                        let bend=((thigh*thigh+distance*distance-shin*shin)
+                            /(2.0*thigh*distance)).clamp(-1.0,1.0).acos();
+                        let upper=direction+bend;
+                        let lower=(dx-thigh*upper.sin()).atan2(-(dy+thigh*upper.cos()));
+                        let phase_blend=((phase-start)/(1.0-start)).clamp(0.0,1.0);
+                        let weight=blend*phase_blend*phase_blend*(3.0-2.0*phase_blend);
+                        target_q[3]=target_q[3]*(1.0-weight)+upper*weight;
+                        target_q[4]=target_q[4]*(1.0-weight)+lower*weight;
+                    }
+                }
+            }
+            let b=runtime.model.b.transpose();
+            let (kp,kd,mut offsets)=self.rabbit_flight_pd.unwrap_or((40.0,4.0,[0.0;4]));
+            for (offset,correction) in offsets.iter_mut().zip(residual) {*offset+=correction;}
+            if let Some((gain,target_speed))=self.rabbit_flight_placement {
+                offsets[2]+=(gain*(torso.linvel().x as f64-target_speed)).clamp(-0.5,0.5);
+            }
+            if let Some((gain,offset,lookahead))=self.rabbit_flight_com_placement {
+                let swing=if runtime.stance_left {LegSide::Right}else{LegSide::Left};
+                if let (Some(com),Some(foot))=(self.robot_center_of_mass(),self.foot_world(swing)) {
+                    let remaining=(runtime.plan.flight_time_s-runtime.elapsed as f64).max(0.0);
+                    let landing_x=com[0] as f64+lookahead*torso.linvel().x as f64*remaining+offset;
+                    offsets[2]+=(gain*(landing_x-foot[0] as f64)*phase*phase).clamp(-0.4,0.4);
+                }
+            }
+            let mut torques=feedforward+kp*(b*(target_q-q)+nalgebra::SVector::<f64,4>::from_row_slice(&offsets))
+                +kd*(b*(target_v-v));
+            if let Some((pitch_kp,pitch_kd))=self.rabbit_flight_pitch {
+                let correction=0.5*(pitch_kp*(torso.rotation().angle() as f64-target_q[2])
+                    +pitch_kd*(torso.angvel() as f64-target_v[2]));
+                torques[0]+=correction;torques[2]+=correction;
+            }
+            (torques,b*target_q+nalgebra::SVector::<f64,4>::from_row_slice(&residual))
+        };
+        let names=if runtime.stance_left {[JointName::LeftHip,JointName::LeftKnee,JointName::RightHip,JointName::RightKnee]}
+            else{[JointName::RightHip,JointName::RightKnee,JointName::LeftHip,JointName::LeftKnee]};
+        let dt=self.dt();
+        let robot=self.robot.as_mut().unwrap();
+        for (i,name) in names.iter().enumerate() {
+            let servo=robot.servos.get_mut(name).unwrap();
+            let velocity=self.bodies[servo.child].angvel()-self.bodies[servo.parent].angvel();
+            let mut torque=(torques[i] as f32).clamp(-self.servo_max_torque,self.servo_max_torque);
+            if velocity.abs()>self.servo_max_speed_rad_s && torque*velocity>0.0 {torque=0.0;}
+            servo.last_torque=torque;servo.target=reference[i] as f32;servo.commanded_target=servo.target;servo.integral_error=0.0;
+            self.bodies[servo.parent].apply_torque_impulse(-torque*dt,true);
+            self.bodies[servo.child].apply_torque_impulse(torque*dt,true);
+        }
+        self.walk_support_state=if runtime.stance_left {WalkSupportState::SingleSupportLeft}else{WalkSupportState::SingleSupportRight};
+        self.walk_state_time=runtime.elapsed;
+        self.rabbit_running=Some(runtime);true
+    }
+
+    fn apply_rabbit_forces(&mut self)->bool {
+        self.rabbit_teacher_torque_norm = None;
+        let Some(mut runtime)=self.rabbit_runtime.take() else {return false;};
+        let stop_speed=self.robot.as_ref().map(|r|self.bodies[r.torso].linvel().x.abs()).unwrap_or(0.0);
+        if runtime.stopping && (runtime.trajectory.speed_mps<0.55 || (runtime.elapsed>1.0 && stop_speed<0.02)) && stop_speed<0.25 && self.foot_contact(true) && self.foot_contact(false) {
+            if let Some(robot)=self.robot.as_mut() {
+                for servo in robot.servos.values_mut() {
+                    let angle=self.bodies[servo.child].rotation().angle()-self.bodies[servo.parent].rotation().angle();
+                    servo.target=angle;servo.commanded_target=angle;servo.integral_error=0.0;
+                }
+            }
+            self.directional_walk_enabled=false;self.walk_speed=0.0;
+            runtime.stopping=false;
+            self.rabbit_runtime=Some(runtime);
+            return false;
+        }
+        if !self.directional_walk_enabled {self.rabbit_runtime=Some(runtime);return false;}
+        // Restart from the measured resting pose using joint torques only. Lean
+        // over the front support until forward velocity can sustain the orbit.
+        if runtime.preparing {
+            runtime.elapsed+=self.dt();
+            let front_left=self.foot_world(LegSide::Left).unwrap()[0]>self.foot_world(LegSide::Right).unwrap()[0];
+            let targets=self.canonical_initial_targets;
+            let lean=0.50*runtime.elapsed.clamp(0.0,1.0);
+            let robot=self.robot.as_mut().unwrap();
+            for (name, value) in [
+                (JointName::LeftHip,lean+if front_left {targets.left_hip}else{targets.right_hip}),
+                (JointName::RightHip,lean+if front_left {targets.right_hip}else{targets.left_hip}),
+                (JointName::LeftKnee,targets.left_knee),
+                (JointName::RightKnee,targets.right_knee),
+            ] {robot.servos.get_mut(&name).unwrap().commanded_target=value;}
+            if runtime.elapsed>=0.4 && self.bodies[self.robot.as_ref().unwrap().torso].linvel().x>0.2 {
+                runtime.preparing=false;runtime.starting=false;runtime.elapsed=0.0;
+                runtime.stance_left=front_left;
+                self.refresh_walk_anchors_from_pose();
+            }
+            self.rabbit_runtime=Some(runtime);return false;
+        }
+        if runtime.starting {
+            runtime.elapsed+=self.dt();
+            if runtime.elapsed>0.6 && self.foot_contact(true) && self.foot_contact(false) {
+                runtime.stance_left=self.foot_world(LegSide::Left).unwrap()[0]>self.foot_world(LegSide::Right).unwrap()[0];
+                runtime.starting=false;runtime.elapsed=0.0;
+            } else {self.rabbit_runtime=Some(runtime);return false;}
+        }
+        let Some(robot)=self.robot.as_ref() else {return false;};
+        let torso=&self.bodies[robot.torso];
+        if torso.translation().y<0.7 || torso.rotation().angle().abs()>1.0 {
+            self.directional_walk_enabled=false;return false;
+        }
+        let dt=self.dt();runtime.elapsed+=dt;
+        if runtime.elapsed>5.0 {self.directional_walk_enabled=false;return false;}
+        let left=self.foot_world(LegSide::Left).unwrap();let right=self.foot_world(LegSide::Right).unwrap();
+        let (stance,swing)=if runtime.stance_left {(left,right)}else{(right,left)};
+        if runtime.elapsed>0.12 && swing[0]>stance[0]+0.08 && self.foot_contact(!runtime.stance_left) {
+            runtime.stance_left=!runtime.stance_left;runtime.elapsed=0.0;runtime.steps+=1;
+            if runtime.steps>self.rabbit_transition_after_steps {
+                if let Some(goal)=runtime.goal.as_ref() {
+                    runtime.trajectory=runtime.trajectory.blend(goal,if runtime.stopping {self.rabbit_brake_gain} else {self.rabbit_transition_gain});
+                }
+            }
+        }
+        let handles=if runtime.stance_left {
+            [robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]
+        }else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+        let q=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64);
+        let v=nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].angvel() as f64);
+        // Higher-speed references need stronger position tracking, but excessive
+        // damping suppresses forward motion in the finite-foot contact model.
+        let fast_blend=if runtime.stopping && runtime.goal.as_ref().is_some_and(|g|g.speed_mps>=0.5) {1.0}
+            else if runtime.trajectory.speed_mps<=0.60001 {0.0}
+            else {((runtime.trajectory.speed_mps-0.6)/0.4).clamp(0.0,1.0)};
+        let (fast_kp,fast_kd)=(400.0,15.0);
+        let reference=self.rabbit_virtual_reference.as_ref().map(|(table,mix)|(table,*mix as f64));
+        let Some(mut torques)=runtime.model.control_with_reference(&q,&v,&runtime.trajectory,100.0+(fast_kp-100.0)*fast_blend,20.0+(fast_kd-20.0)*fast_blend,reference) else {
+            self.directional_walk_enabled=false;return false;
+        };
+        // Add one motor-driven swing per approach while the opposite foot is grounded.
+        // Repeated boosts while chasing a nearby rolling ball accumulate forward
+        // speed and destabilize touchdown. Separation rearms the next approach.
+        // The ball receives momentum only through Rapier collision response.
+        if let Some(ball)=self.ball_body_state() {
+            let gap=ball.x-torso.translation().x;
+            let phase=runtime.model.phase(&q,&runtime.trajectory);
+            if gap>0.9 {runtime.kick_step=None;}
+            let kick_available=runtime.kick_step.is_none() || runtime.kick_step==Some(runtime.steps);
+            if kick_available && !runtime.stopping && gap>0.05 && gap<0.45 && ball.vx<1.8 && ball.y<0.45 && torso.rotation().angle().abs()<0.32 && torso.angvel().abs()<1.5 && self.foot_contact(runtime.stance_left) {
+                let pulse=libm::sin(std::f64::consts::PI*((phase-0.35)/0.60).clamp(0.0,1.0)).max(0.0);
+                if pulse>0.0 {runtime.kick_step=Some(runtime.steps);}
+                let gain=0.10;
+                torques[2]+=gain*pulse;
+                torques[0]-=gain*pulse;
+                torques[3]+=gain*1.6666667*pulse;
+            }
+        }
+        let names=if runtime.stance_left {[JointName::LeftHip,JointName::LeftKnee,JointName::RightHip,JointName::RightKnee]}
+            else{[JointName::RightHip,JointName::RightKnee,JointName::LeftHip,JointName::LeftKnee]};
+        let phase=runtime.model.phase(&q,&runtime.trajectory);
+        if let Some((amplitude,start,end))=self.rabbit_stance_push {
+            let scheduled=self.rabbit_stance_push_period.map_or(true,|(every,offset)|runtime.steps%every==offset);
+            if scheduled && phase>=start && phase<=end && self.foot_contact(runtime.stance_left) {
+                torques[1]+=amplitude as f64;
+            }
+        }
+        if let Some((kp,kd,mut offsets))=self.rabbit_flight_pd {
+            if !self.foot_contact(true) && !self.foot_contact(false) {
+                if let Some((gain,target_speed))=self.rabbit_flight_placement {
+                    offsets[2]+=(gain*(torso.linvel().x as f64-target_speed)).clamp(-0.5,0.5);
+                }
+                let (mut target_q,mut target_v,_) = runtime.trajectory.sample_kinematics(1.0);
+                if let Some((table,mix))=self.rabbit_virtual_reference.as_ref() {
+                    let (q,v,_) = table.sample(1.0);
+                    target_q=target_q*(1.0-*mix as f64)+q*(*mix as f64);
+                    target_v=target_v*(1.0-*mix as f64)+v*(*mix as f64);
+                }
+                torques = kp * (runtime.model.b.transpose() * (target_q-q)
+                    + nalgebra::SVector::<f64,4>::from_row_slice(&offsets))
+                    + kd * (runtime.model.b.transpose() * (target_v-v));
+                if let Some((pitch_kp,pitch_kd))=self.rabbit_flight_pitch {
+                    let correction=0.5*(pitch_kp*(torso.rotation().angle() as f64-target_q[2])
+                        +pitch_kd*(torso.angvel() as f64-target_v[2]));
+                    torques[0]+=correction;
+                    torques[2]+=correction;
+                }
+            }
+        }
+        let reference=runtime.model.b.transpose()*runtime.trajectory.sample(phase).0;
+        let mut teacher_torque_norm = [0.0; 4];
+        let robot=self.robot.as_mut().unwrap();
+        for (i,name) in names.iter().enumerate() {
+            let servo=robot.servos.get_mut(name).unwrap();
+            let velocity=self.bodies[servo.child].angvel()-self.bodies[servo.parent].angvel();
+            let index=JointName::ALL.iter().position(|candidate| candidate == name).unwrap();
+            let teacher=(torques[i] as f32).clamp(-self.servo_max_torque,self.servo_max_torque);
+            teacher_torque_norm[index]=teacher/self.servo_max_torque;
+            let mut torque=if let Some((external,mix))=self.rabbit_external_torque_norm {
+                teacher*(1.0-mix)+external[index]*self.servo_max_torque*mix
+            }else{teacher};
+            // Do not accelerate an already overspeed joint in the same direction.
+            if velocity.abs()>self.servo_max_speed_rad_s && torque*velocity>0.0 {torque=0.0;}
+            servo.last_torque=torque;servo.target=reference[i] as f32;servo.commanded_target=servo.target;servo.integral_error=0.0;
+            self.bodies[servo.parent].apply_torque_impulse(-torque*dt,true);
+            self.bodies[servo.child].apply_torque_impulse(torque*dt,true);
+        }
+        self.rabbit_teacher_torque_norm=Some(teacher_torque_norm);
+        self.walk_support_state=if runtime.stance_left {WalkSupportState::SingleSupportLeft}else{WalkSupportState::SingleSupportRight};
+        self.walk_state_time=runtime.elapsed;
+        self.rabbit_runtime=Some(runtime);true
+    }
+
+    fn apply_servo_forces(&mut self) {
+        if self.apply_rabbit_running_forces() { return; }
+        if self.apply_rabbit_forces() { return; }
+        let dt = self.dt();
+        if let Some(torques) = self.external_torque_norm {
+            let Some(robot) = &mut self.robot else { return; };
+            for (name, normalized) in JointName::ALL.into_iter().zip(torques) {
+                let Some(servo) = robot.servos.get_mut(&name) else { continue; };
+                let velocity = self.bodies[servo.child].angvel() - self.bodies[servo.parent].angvel();
+                let mut torque = normalized * self.servo_max_torque;
+                if velocity.abs() > self.servo_max_speed_rad_s && torque * velocity > 0.0 {
+                    torque = 0.0;
+                }
+                servo.last_torque = torque;
+                self.bodies[servo.parent].apply_torque_impulse(-torque * dt, true);
+                self.bodies[servo.child].apply_torque_impulse(torque * dt, true);
+            }
+            return;
+        }
+        let integral_limit = self.config.servo.integral_limit;
+        let Some(robot) = &mut self.robot else {
+            return;
+        };
+        let torso_handle = robot.torso;
+
+        for servo in robot.servos.values_mut() {
+            let max_target_delta = self.servo_max_speed_rad_s.max(0.01) * dt;
+            let target_error = normalize_angle(servo.commanded_target - servo.target);
+            let target_step = target_error.clamp(-max_target_delta, max_target_delta);
+            servo.target = normalize_angle(servo.target + target_step);
+
+            let (rel_angle, rel_velocity) = match (
+                self.bodies.get(servo.parent),
+                self.bodies.get(servo.child),
+            ) {
+                (Some(parent), Some(child)) => (
+                    normalize_angle(child.rotation().angle() - parent.rotation().angle()),
+                    child.angvel() - parent.angvel(),
+                ),
+                _ => continue,
+            };
+
+            let error = normalize_angle(servo.target - rel_angle);
+            servo.integral_error =
+                (servo.integral_error + error * dt).clamp(-integral_limit, integral_limit);
+            let torque = (self.servo_kp * error
+                + self.servo_ki * servo.integral_error
+                - self.servo_kd * rel_velocity)
+                .clamp(-self.servo_max_torque, self.servo_max_torque);
+            servo.last_torque = torque;
+            let impulse = torque * dt;
+
+            if let Some(parent) = self.bodies.get_mut(servo.parent) {
+                parent.apply_torque_impulse(-impulse, true);
+            }
+            if let Some(child) = self.bodies.get_mut(servo.child) {
+                child.apply_torque_impulse(impulse, true);
+            }
+        }
+
+        if let Some(torso) = self.bodies.get(torso_handle) {
+            let upright_torque =
+                (-TORSO_UPRIGHT_KP * torso.rotation().angle() - TORSO_UPRIGHT_KD * torso.angvel())
+                    .clamp(-self.servo_max_torque, self.servo_max_torque);
+            let impulse = upright_torque * dt;
+            if let Some(torso) = self.bodies.get_mut(torso_handle) {
+                torso.apply_torque_impulse(impulse, true);
+            }
+        }
+    }
+
+    pub fn state(&self) -> SimulationState {
+        let base = self.robot.as_ref().and_then(|robot| self.body_state(robot.torso));
+        let ball = self.ball.and_then(|handle| self.body_state(handle));
+        let mut joints = BTreeMap::new();
+        let mut link_masses = BTreeMap::new();
+        let mut link_lengths = BTreeMap::new();
+        let mut servo_zeros = BTreeMap::new();
+
+        if let Some(robot) = &self.robot {
+            for (name, servo) in &robot.servos {
+                joints.insert(
+                    name.as_str().to_owned(),
+                    JointState {
+                        angle: self.relative_angle(servo.parent, servo.child).unwrap_or_default(),
+                        velocity: self.relative_velocity(servo.parent, servo.child).unwrap_or_default(),
+                        target: servo.target,
+                        torque: servo.last_torque,
+                    },
+                );
+            }
+
+            for (name, handle) in [
+                ("torso", robot.torso),
+                ("left_thigh", robot.left_thigh),
+                ("left_shin", robot.left_shin),
+                ("right_thigh", robot.right_thigh),
+                ("right_shin", robot.right_shin),
+            ] {
+                if let Some(body) = self.bodies.get(handle) {
+                    link_masses.insert(name.to_owned(), body.mass());
+                }
+            }
+
+            link_lengths.insert("torso".to_owned(), self.config.robot.torso.length);
+            link_lengths.insert("left_thigh".to_owned(), self.config.robot.thigh.length);
+            link_lengths.insert("left_shin".to_owned(), self.config.robot.shin.length);
+            link_lengths.insert("right_thigh".to_owned(), self.config.robot.thigh.length);
+            link_lengths.insert("right_shin".to_owned(), self.config.robot.shin.length);
+
+            servo_zeros.insert("right_hip".to_owned(), self.config.servo.zero_offsets.right_hip);
+            servo_zeros.insert("right_knee".to_owned(), self.config.servo.zero_offsets.right_knee);
+            servo_zeros.insert("left_hip".to_owned(), self.config.servo.zero_offsets.left_hip);
+            servo_zeros.insert("left_knee".to_owned(), self.config.servo.zero_offsets.left_knee);
+        }
+
+        SimulationState {
+            gait_quality: self.gait_quality.report(),
+            time: self.time,
+            mode: if self.paused { "paused" } else { "running" }.to_owned(),
+            scene: self.scene,
+            paused: self.paused,
+            base,
+            ball,
+            joints,
+            link_masses,
+            link_lengths,
+            servo_zeros,
+            contacts: ContactState {
+                left_foot: self.foot_contact(true),
+                right_foot: self.foot_contact(false),
+            },
+            walk_direction: self.rl_target_direction,
+            walk_enabled: self.directional_walk_enabled,
+            walk_target_speed: self.walk_target_speed,
+            walk_controller: if self.rabbit_running.is_some() {"rabbit_running"}else if self.rabbit_runtime.is_some() {"rabbit_virtual_constraints"}else{"ik_feedback"}.into(),
+            planned_steps: self.rabbit_running.as_ref().map_or_else(||self.rabbit_runtime.as_ref().map_or(0,|r|r.steps),|r|r.steps),
+            planned_status: if let Some(r)=self.rabbit_running.as_ref() {
+                if r.recovery.exhausted {"recovery_failed"}else if r.recovery.active {"running_recovery"}else if !self.directional_walk_enabled {"stopped"}else if r.phase==RabbitRunPhase::Flight {"running_flight"}else{"running_stance"}
+            }else{self.rabbit_runtime.as_ref().map_or("idle",|r|if !self.directional_walk_enabled {"stopped"}else if r.preparing {"preparing"}else if r.stopping {"stopping"}else if r.starting {"starting"}else{"walking"})}.into(),
+            planned_phase: self.rabbit_running.as_ref().and_then(|r|self.robot.as_ref().map(|robot|{
+                if r.phase==RabbitRunPhase::Flight {(r.elapsed as f64/r.plan.flight_time_s).clamp(0.0,1.0)}else{
+                    let handles=if r.stance_left {[robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]}else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+                    r.model.phase(&nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64),&r.stance)
+                }
+            })).or_else(||self.rabbit_runtime.as_ref().and_then(|r|self.robot.as_ref().map(|robot|{
+                let handles=if r.stance_left {[robot.left_shin,robot.left_thigh,robot.torso,robot.right_thigh,robot.right_shin]}else{[robot.right_shin,robot.right_thigh,robot.torso,robot.left_thigh,robot.left_shin]};
+                r.model.phase(&nalgebra::SVector::<f64,5>::from_fn(|i,_|self.bodies[handles[i]].rotation().angle() as f64),&r.trajectory)
+            }))),
+            planned_stance_left: self.rabbit_running.as_ref().map(|r|r.stance_left).or_else(||self.rabbit_runtime.as_ref().map(|r|r.stance_left)),
+            rabbit_teacher_torque_norm: self.rabbit_teacher_torque_norm,
+            rabbit_reference_mix: self.rabbit_virtual_reference.as_ref().map_or(0.0,|(_,mix)|*mix),
+            rabbit_running_target_pitch_rad:self.rabbit_running.as_ref().map(|r|r.target_pitch),
+            planned_orbit_speed_mps: self.rabbit_running.as_ref().map(|r|r.plan.speed_mps).or_else(||self.rabbit_runtime.as_ref().map(|r|r.trajectory.speed_mps)),
+            walk_speed: self.walk_speed,
+            walk_support_state: format!("{:?}", self.walk_support_state),
+            walk_state_time: self.walk_state_time,
+            left_foot: self.foot_world(LegSide::Left),
+            right_foot: self.foot_world(LegSide::Right),
+            walk_left_anchor: self.walk_left_anchor,
+            walk_right_anchor: self.walk_right_anchor,
+            walk_left_touchdown_x: self.walk_left_touchdown_x,
+            walk_right_touchdown_x: self.walk_right_touchdown_x,
+        }
+    }
+
+    fn apply_rl_residual_targets(&mut self) {
+        if !self.rl_residual_enabled {
+            return;
+        }
+        let current = self.current_commanded_targets();
+        self.apply_targets(ServoTargets {
+            right_hip: current
+                .right_hip
+                .map(|value| clamp_joint_target(JointName::RightHip, value + self.rl_residual_action_deg[0].to_radians())),
+            right_knee: current
+                .right_knee
+                .map(|value| clamp_joint_target(JointName::RightKnee, value + self.rl_residual_action_deg[1].to_radians())),
+            left_hip: current
+                .left_hip
+                .map(|value| clamp_joint_target(JointName::LeftHip, value + self.rl_residual_action_deg[2].to_radians())),
+            left_knee: current
+                .left_knee
+                .map(|value| clamp_joint_target(JointName::LeftKnee, value + self.rl_residual_action_deg[3].to_radians())),
+        });
+    }
+
+    pub fn robot_segments(&self) -> Vec<([f32; 2], [f32; 2])> {
+        let Some(robot) = &self.robot else {
+            return Vec::new();
+        };
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        let thigh_half_height = self.config.robot.thigh.length * 0.5;
+        let shin_half_height = self.config.robot.shin.length * 0.5;
+        let torso_top = self.body_point(robot.torso, point![0.0, torso_half_height]);
+        let pelvis = self.body_point(robot.torso, point![0.0, -torso_half_height]);
+        let left_knee = self.body_point(robot.left_thigh, point![0.0, -thigh_half_height]);
+        let left_foot = self.body_point(robot.left_shin, point![0.0, -shin_half_height]);
+        let right_knee = self.body_point(robot.right_thigh, point![0.0, -thigh_half_height]);
+        let right_foot = self.body_point(robot.right_shin, point![0.0, -shin_half_height]);
+
+        let points = [torso_top, pelvis, left_knee, left_foot, right_knee, right_foot];
+        if points.iter().any(Option::is_none) {
+            return Vec::new();
+        }
+        let points: Vec<[f32; 2]> = points.into_iter().flatten().collect();
+        vec![
+            (points[1], points[0]),
+            (points[1], points[2]),
+            (points[2], points[3]),
+            (points[1], points[4]),
+            (points[4], points[5]),
+        ]
+    }
+
+    pub fn joint_markers(&self) -> BTreeMap<String, [f32; 2]> {
+        let Some(robot) = &self.robot else {
+            return BTreeMap::new();
+        };
+        let mut markers = BTreeMap::new();
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        let thigh_half_height = self.config.robot.thigh.length * 0.5;
+        if let Some(pelvis) = self.body_point(robot.torso, point![0.0, -torso_half_height]) {
+            markers.insert("left_hip".to_owned(), [pelvis[0] - 0.05, pelvis[1]]);
+            markers.insert("right_hip".to_owned(), [pelvis[0] + 0.05, pelvis[1]]);
+        }
+        if let Some(left_knee) = self.body_point(robot.left_thigh, point![0.0, -thigh_half_height]) {
+            markers.insert("left_knee".to_owned(), left_knee);
+        }
+        if let Some(right_knee) = self.body_point(robot.right_thigh, point![0.0, -thigh_half_height]) {
+            markers.insert("right_knee".to_owned(), right_knee);
+        }
+        markers
+    }
+
+    pub fn robot_center_of_mass(&self) -> Option<[f32; 2]> {
+        let robot = self.robot.as_ref()?;
+        let handles = [
+            robot.torso,
+            robot.left_thigh,
+            robot.left_shin,
+            robot.right_thigh,
+            robot.right_shin,
+        ];
+        let mut mass_sum = 0.0f32;
+        let mut weighted = vector![0.0f32, 0.0f32];
+        for handle in handles {
+            let body = self.bodies.get(handle)?;
+            let mass = body.mass();
+            let pos = body.translation();
+            weighted += vector![pos.x * mass, pos.y * mass];
+            mass_sum += mass;
+        }
+        if mass_sum <= f32::EPSILON {
+            None
+        } else {
+            Some([weighted.x / mass_sum, weighted.y / mass_sum])
+        }
+    }
+
+    fn robot_kinematics(&self) -> FiveLinkKinematics {
+        FiveLinkKinematics {
+            torso_length: self.config.robot.torso.length,
+            thigh_length: self.config.robot.thigh.length,
+            shin_length: self.config.robot.shin.length,
+        }
+    }
+
+    fn pelvis_world(&self) -> Option<[f32; 2]> {
+        let robot = self.robot.as_ref()?;
+        let torso_half_height = self.config.robot.torso.length * 0.5;
+        self.body_point(robot.torso, point![0.0, -torso_half_height])
+    }
+
+    fn foot_world(&self, side: LegSide) -> Option<[f32; 2]> {
+        let robot = self.robot.as_ref()?;
+        let shin_half_height = self.config.robot.shin.length * 0.5;
+        match side {
+            LegSide::Left => self.body_point(robot.left_shin, point![0.0, -shin_half_height]),
+            LegSide::Right => self.body_point(robot.right_shin, point![0.0, -shin_half_height]),
+        }
+    }
+
+    fn ball_body_state(&self) -> Option<BodyState> {
+        self.ball.and_then(|handle| self.body_state(handle))
+    }
+
+    fn refresh_walk_anchors_from_pose(&mut self) {
+        if let Some(left) = self.foot_world(LegSide::Left) {
+            self.walk_left_anchor = [left[0], GROUND_Y];
+            self.walk_left_swing_start = left;
+            self.walk_left_touchdown_x = left[0];
+        }
+        if let Some(right) = self.foot_world(LegSide::Right) {
+            self.walk_right_anchor = [right[0], GROUND_Y];
+            self.walk_right_swing_start = right;
+            self.walk_right_touchdown_x = right[0];
+        }
+        self.walk_support_state = if self.front_leg_side(self.rl_target_direction) == LegSide::Left {
+            WalkSupportState::DoubleSupportLeft
+        } else {
+            WalkSupportState::DoubleSupportRight
+        };
+        self.walk_state_time = 0.0;
+        self.sync_walk_support_flags();
+        self.recovery_active = false;
+        self.recovery_timer = 0.0;
+        self.kick_active = false;
+        self.kick_timer = 0.0;
+        self.kick_impulse_used = false;
+        self.kick_cooldown = 0.0;
+    }
+
+    fn sync_walk_support_flags(&mut self) {
+        match self.walk_support_state {
+            WalkSupportState::DoubleSupportLeft | WalkSupportState::DoubleSupportRight => {
+                self.walk_left_in_stance = true;
+                self.walk_right_in_stance = true;
+            }
+            WalkSupportState::SingleSupportLeft => {
+                self.walk_left_in_stance = true;
+                self.walk_right_in_stance = false;
+            }
+            WalkSupportState::SingleSupportRight => {
+                self.walk_left_in_stance = false;
+                self.walk_right_in_stance = true;
+            }
+        }
+    }
+
+    fn walk_state_durations(&self, cycle_hz: f32, speed_ratio: f32) -> (f32, f32) {
+        let half_step_duration = 0.5 / cycle_hz.max(0.2);
+        let double_support_fraction =
+            ((self.config.walk.stance_duty_factor - 0.5) * 0.7 + 0.10 * (1.0 - speed_ratio)).clamp(0.16, 0.32);
+        let double_support_duration = (half_step_duration * double_support_fraction).max(self.dt() * 2.0);
+        let single_support_duration = (half_step_duration - double_support_duration).max(self.dt() * 4.0);
+        (double_support_duration, single_support_duration)
+    }
+
+    fn update_walk_phase_from_state(&mut self, double_support_duration: f32, single_support_duration: f32) {
+        let total_cycle = 2.0 * (double_support_duration + single_support_duration);
+        let phase_offset = match self.walk_support_state {
+            WalkSupportState::DoubleSupportLeft => 0.0,
+            WalkSupportState::SingleSupportLeft => double_support_duration,
+            WalkSupportState::DoubleSupportRight => double_support_duration + single_support_duration,
+            WalkSupportState::SingleSupportRight => 2.0 * double_support_duration + single_support_duration,
+        };
+        self.walk_phase = std::f32::consts::TAU * ((phase_offset + self.walk_state_time) / total_cycle.max(self.dt()));
+    }
+
+    fn current_walk_state_duration(&self, double_support_duration: f32, single_support_duration: f32) -> f32 {
+        match self.walk_support_state {
+            WalkSupportState::DoubleSupportLeft | WalkSupportState::DoubleSupportRight => double_support_duration,
+            WalkSupportState::SingleSupportLeft | WalkSupportState::SingleSupportRight => single_support_duration,
+        }
+    }
+
+    fn capture_swing_start(&mut self, side: LegSide) {
+        let start = self.foot_world(side).unwrap_or_else(|| match side {
+            LegSide::Left => self.walk_left_anchor,
+            LegSide::Right => self.walk_right_anchor,
+        });
+        match side {
+            LegSide::Left => self.walk_left_swing_start = start,
+            LegSide::Right => self.walk_right_swing_start = start,
+        }
+    }
+
+    fn plan_walk_touchdown_x(
+        &self,
+        support_x: f32,
+        direction: f32,
+        step_length: f32,
+        support_shift: f32,
+        spread: f32,
+    ) -> f32 {
+        let _ = (step_length, spread, support_shift);
+        let Some(base) = self.robot.as_ref().and_then(|r| self.body_state(r.torso)) else {
+            return support_x;
+        };
+        let desired_velocity = direction * self.walk_speed;
+        // Raibert-style placement: move the landing point forward when too
+        // fast, backward when too slow. Use measured velocity, not just a clock.
+        let landing = base.x + 0.18 * base.vx
+            + self.config.walk.velocity_kp * 0.18 * (base.vx - desired_velocity)
+            + direction * 0.025;
+        let advance = ((landing - support_x) * direction)
+            .max(self.config.walk.nominal_step_length_m * 0.65)
+            .clamp(0.02, 0.24);
+        support_x + direction * advance
+
+    }
+
+    fn begin_single_support(
+        &mut self,
+        support_side: LegSide,
+        direction: f32,
+        step_length: f32,
+        support_shift: f32,
+        spread: f32,
+    ) {
+        let swing_side = opposite_leg(support_side);
+        self.capture_swing_start(swing_side);
+        let support_x = self
+            .foot_world(support_side)
+            .map(|foot| foot[0])
+            .unwrap_or_else(|| match support_side {
+                LegSide::Left => self.walk_left_anchor[0],
+                LegSide::Right => self.walk_right_anchor[0],
+            });
+        let touchdown_x = self.plan_walk_touchdown_x(support_x, direction, step_length, support_shift, spread);
+        match swing_side {
+            LegSide::Left => self.walk_left_touchdown_x = touchdown_x,
+            LegSide::Right => self.walk_right_touchdown_x = touchdown_x,
+        }
+        self.walk_support_state = match support_side {
+            LegSide::Left => WalkSupportState::SingleSupportLeft,
+            LegSide::Right => WalkSupportState::SingleSupportRight,
+        };
+        self.walk_state_time = 0.0;
+        self.sync_walk_support_flags();
+    }
+
+    fn begin_double_support(&mut self, lead_side: LegSide) {
+        match lead_side {
+            LegSide::Left => {
+                self.walk_left_anchor = self.foot_world(LegSide::Left).map(|p| [p[0], GROUND_Y]).unwrap_or([self.walk_left_touchdown_x, GROUND_Y]);
+                self.walk_left_swing_start = self.walk_left_anchor;
+                self.walk_support_state = WalkSupportState::DoubleSupportLeft;
+            }
+            LegSide::Right => {
+                self.walk_right_anchor = self.foot_world(LegSide::Right).map(|p| [p[0], GROUND_Y]).unwrap_or([self.walk_right_touchdown_x, GROUND_Y]);
+                self.walk_right_swing_start = self.walk_right_anchor;
+                self.walk_support_state = WalkSupportState::DoubleSupportRight;
+            }
+        }
+        self.walk_state_time = 0.0;
+        self.sync_walk_support_flags();
+    }
+
+    fn advance_walk_support_state(
+        &mut self,
+        direction: f32,
+        step_length: f32,
+        support_shift: f32,
+        spread: f32,
+    ) {
+        match self.walk_support_state {
+            WalkSupportState::DoubleSupportLeft => {
+                self.begin_single_support(LegSide::Left, direction, step_length, support_shift, spread);
+            }
+            WalkSupportState::SingleSupportLeft => {
+                self.begin_double_support(LegSide::Right);
+            }
+            WalkSupportState::DoubleSupportRight => {
+                self.begin_single_support(LegSide::Right, direction, step_length, support_shift, spread);
+            }
+            WalkSupportState::SingleSupportRight => {
+                self.begin_double_support(LegSide::Left);
+            }
+        }
+    }
+
+    fn apply_directional_walk_targets(&mut self) {
+        if self.rabbit_running.is_some() || self.rabbit_runtime.as_ref().is_some_and(|r|!r.starting || r.preparing) || !self.directional_walk_enabled || self.motion_sequence.is_some() || self.gait.is_some() {
+            return;
+        }
+
+        let dt = self.dt();
+        let direction = self.rl_target_direction;
+        let Some(robot) = &self.robot else {
+            return;
+        };
+        let Some(base) = self.body_state(robot.torso) else {
+            return;
+        };
+        let Some(pelvis) = self.pelvis_world() else {
+            return;
+        };
+        let kinematics = self.robot_kinematics();
+        let walk_cfg = self.config.walk.clone();
+        self.kick_cooldown = (self.kick_cooldown - dt).max(0.0);
+
+        if base.y < 0.45 || base.angle.abs() > 1.6 {
+            self.directional_walk_enabled = false;
+            self.walk_speed = 0.0;
+            return;
+        }
+
+        if self.recovery_active
+            || base.y < walk_cfg.recovery_height_threshold_m
+            || base.angle.abs() > walk_cfg.recovery_angle_threshold_rad
+        {
+            if !self.recovery_active {
+                self.recovery_active = true;
+                self.recovery_timer = 0.0;
+                self.kick_active = false;
+                self.kick_timer = 0.0;
+                self.kick_impulse_used = false;
+            }
+            self.apply_recovery_targets(base.angle, base.y, dt);
+            if base.y > walk_cfg.recovery_height_threshold_m + 0.18 && base.angle.abs() < 0.45 {
+                self.recovery_active = false;
+                self.recovery_timer = 0.0;
+                self.walk_phase = 0.0;
+                self.refresh_walk_anchors_from_pose();
+            } else if self.recovery_timer > 2.2 {
+                self.directional_walk_enabled = false;
+                self.walk_speed = 0.0;
+            }
+            return;
+        }
+
+        let forward_velocity = base.vx * direction;
+        let max_accel = walk_cfg.max_accel_mps2.max(0.05);
+        let speed_error = self.walk_target_speed - self.walk_speed;
+        let speed_step = max_accel * dt;
+        self.walk_speed += speed_error.clamp(-speed_step, speed_step);
+
+        // Filter impact spikes before adapting cadence to measured progress.
+        self.walk_measured_speed += (forward_velocity.max(0.0) - self.walk_measured_speed)
+            * (dt / (0.20 + dt));
+        self.walk_elapsed += dt;
+        let cadence_blend = smoothstep01((self.walk_elapsed - 3.0) / 2.0);
+        let cadence_speed = self.walk_speed.max(lerp(self.walk_speed, self.walk_measured_speed, cadence_blend));
+        let speed_ratio = (cadence_speed / walk_cfg.max_speed_mps.max(0.1)).clamp(0.0, 1.0);
+        let cycle_hz = (walk_cfg.cycle_frequency_hz
+            + (walk_cfg.max_cycle_frequency_hz - walk_cfg.cycle_frequency_hz) * speed_ratio)
+            * (0.90 + 0.10 * speed_ratio);
+        let (double_support_duration, single_support_duration) = self.walk_state_durations(cycle_hz, speed_ratio);
+        self.walk_state_time += dt;
+
+        // Positive world rotation leans backwards when walking to the right.
+        let desired_torso_angle = -direction
+            * (self.walk_speed * walk_cfg.torso_forward_lean_per_speed)
+                .clamp(0.0, walk_cfg.torso_forward_lean_max_rad);
+        let torso_angle_error = normalize_angle(base.angle - desired_torso_angle);
+        let torso_feedback =
+            (-walk_cfg.torso_pitch_kp * torso_angle_error - walk_cfg.torso_pitch_kd * base.omega).clamp(-0.16, 0.16);
+        let velocity_feedback =
+            (walk_cfg.velocity_kp * (self.walk_speed - forward_velocity)).clamp(-0.20, 0.20);
+        let support_shift = (torso_feedback + velocity_feedback) * 0.06;
+        let step_length = (walk_cfg.nominal_step_length_m
+            + walk_cfg.step_length_gain * self.walk_speed
+            + 0.008 * speed_ratio)
+            .clamp(0.04, 0.18);
+        let step_height = (walk_cfg.nominal_step_height_m
+            + (walk_cfg.run_step_height_m - walk_cfg.nominal_step_height_m) * 0.30 * speed_ratio)
+            .clamp(0.018, 0.065);
+        let swing_retraction_m = (0.012 + 0.022 * speed_ratio).clamp(0.012, 0.036);
+        let spread = walk_cfg.stance_foot_spread_m.clamp(0.08, 0.30);
+
+        let duration = self.current_walk_state_duration(double_support_duration, single_support_duration);
+        let landed = match self.walk_support_state {
+            WalkSupportState::SingleSupportLeft => self.foot_contact(false),
+            WalkSupportState::SingleSupportRight => self.foot_contact(true),
+            _ => true,
+        };
+        // Transfer support only after the swing foot actually touches down.
+        if self.walk_state_time >= duration && landed {
+            self.advance_walk_support_state(direction, step_length, support_shift, spread);
+        }
+        self.update_walk_phase_from_state(double_support_duration, single_support_duration);
+
+        if !self.kick_active {
+            if let Some(ball) = self.ball_body_state() {
+                let ball_rel_x = (ball.x - pelvis[0]) * direction;
+                let front_side = self.front_leg_side(direction);
+                let both_feet_supported = self.foot_contact(true) && self.foot_contact(false);
+                if ball_rel_x > 0.32
+                    && ball_rel_x < walk_cfg.kick_trigger_distance_m
+                    && ball.y < 0.45
+                    && base.angle.abs() < 0.32
+                    && self.walk_speed > 0.22
+                    && both_feet_supported
+                    && self.kick_cooldown <= 0.0
+                {
+                    self.kick_active = true;
+                    self.kick_timer = 0.0;
+                    self.kick_impulse_used = false;
+                    self.kick_swing_side = front_side;
+                    self.kick_support_side = match front_side {
+                        LegSide::Left => LegSide::Right,
+                        LegSide::Right => LegSide::Left,
+                    };
+                    if let Some(support_foot) = self.foot_world(self.kick_support_side) {
+                        match self.kick_support_side {
+                            LegSide::Left => self.walk_left_anchor = [support_foot[0], GROUND_Y],
+                            LegSide::Right => self.walk_right_anchor = [support_foot[0], GROUND_Y],
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.kick_active {
+            self.kick_timer += dt;
+            self.apply_kick_targets(&kinematics, pelvis, base.angle, direction);
+            return;
+        }
+
+        let state_progress = (self.walk_state_time
+            / self.current_walk_state_duration(double_support_duration, single_support_duration).max(self.dt()))
+            .clamp(0.0, 1.0);
+        if state_progress < 0.7 {
+            let blend = (dt * 8.0).min(1.0);
+            match self.walk_support_state {
+                WalkSupportState::SingleSupportLeft => {
+                    let target = self.plan_walk_touchdown_x(self.walk_left_anchor[0], direction, step_length, support_shift, spread);
+                    self.walk_right_touchdown_x = lerp(self.walk_right_touchdown_x, target, blend);
+                }
+                WalkSupportState::SingleSupportRight => {
+                    let target = self.plan_walk_touchdown_x(self.walk_right_anchor[0], direction, step_length, support_shift, spread);
+                    self.walk_left_touchdown_x = lerp(self.walk_left_touchdown_x, target, blend);
+                }
+                _ => {}
+            }
+        }
+        let (mut left_leg, mut right_leg) = self.walk_targets_from_state(
+            direction,
+            state_progress,
+            step_length,
+            step_height,
+            spread,
+            support_shift,
+            swing_retraction_m,
+        );
+
+        let double_support = matches!(
+            self.walk_support_state,
+            WalkSupportState::DoubleSupportLeft | WalkSupportState::DoubleSupportRight
+        );
+        let stance_compression = if double_support { 0.014 } else { 0.002 };
+        let pelvis_bob = if double_support {
+            -0.006 * smoothstep01(state_progress)
+        } else {
+            0.006 * (1.0 - (2.0 * state_progress - 1.0).abs())
+        };
+        let desired_pelvis_height = walk_cfg.pelvis_height_target_m + pelvis_bob - stance_compression;
+        let vertical_feedback = ((desired_pelvis_height - pelvis[1]) * 0.40 - 0.08 * base.vy).clamp(-0.035, 0.035);
+
+        right_leg.target[1] -= vertical_feedback;
+        left_leg.target[1] -= vertical_feedback;
+
+        if matches!(right_leg.phase, WalkLegPhase::TerminalSwing) {
+            right_leg.target[1] = right_leg.target[1].max(GROUND_Y);
+        }
+        if matches!(left_leg.phase, WalkLegPhase::TerminalSwing) {
+            left_leg.target[1] = left_leg.target[1].max(GROUND_Y);
+        }
+
+        // If the nominal swing has ended above the floor, lower the foot
+        // gently until contact; do not freeze forever or invent a touchdown.
+        let landing_search = ((self.walk_state_time - duration).max(0.0) * 0.08).min(0.06);
+        if !right_leg.in_stance { right_leg.target[1] -= landing_search; }
+        if !left_leg.in_stance { left_leg.target[1] -= landing_search; }
+
+        // In the sagittal projection the feet must pass each other during swing.
+        // Both knees bend in the same anatomical direction.
+        let bend = if direction >= 0.0 { LegSide::Left } else { LegSide::Right };
+
+        let Some(right_ik) = kinematics.solve_leg_ik(bend, pelvis, base.angle, right_leg.target) else {
+            return;
+        };
+        let Some(left_ik) = kinematics.solve_leg_ik(bend, pelvis, base.angle, left_leg.target) else {
+            return;
+        };
+        let hip_upright_correction =
+            (walk_cfg.hip_upright_gain * torso_angle_error + walk_cfg.hip_upright_damping * base.omega).clamp(-0.5, 0.5);
+
+        self.apply_targets(ServoTargets {
+            right_hip: Some(clamp_joint_target(
+                JointName::RightHip,
+                right_ik.hip + if right_leg.in_stance { hip_upright_correction } else { 0.0 },
+            )),
+            right_knee: Some(right_ik.knee),
+            left_hip: Some(clamp_joint_target(
+                JointName::LeftHip,
+                left_ik.hip + if left_leg.in_stance { hip_upright_correction } else { 0.0 },
+            )),
+            left_knee: Some(left_ik.knee),
+        });
+    }
+
+    fn apply_recovery_targets(&mut self, torso_angle: f32, torso_height: f32, dt: f32) {
+        self.recovery_timer += dt;
+        self.walk_speed = 0.0;
+        let zeros = self.config.servo.zero_offsets;
+        let roll = if torso_angle >= 0.0 { 1.0 } else { -1.0 };
+        let (right_hip, right_knee, left_hip, left_knee) = if torso_height < 0.38 || torso_angle.abs() > 1.6 {
+            (
+                zeros.right_hip - 0.9 * roll,
+                zeros.right_knee + 1.0,
+                zeros.left_hip - 0.9 * roll,
+                zeros.left_knee - 1.0,
+            )
+        } else if self.recovery_timer < 0.7 {
+            (
+                zeros.right_hip - 0.35 * roll,
+                zeros.right_knee + 0.75,
+                zeros.left_hip - 0.35 * roll,
+                zeros.left_knee - 0.75,
+            )
+        } else if self.recovery_timer < 1.4 {
+            (
+                zeros.right_hip - 0.15 * roll,
+                zeros.right_knee + 0.35,
+                zeros.left_hip - 0.15 * roll,
+                zeros.left_knee - 0.35,
+            )
+        } else {
+            (zeros.right_hip, zeros.right_knee, zeros.left_hip, zeros.left_knee)
+        };
+        self.apply_targets(ServoTargets {
+            right_hip: Some(right_hip),
+            right_knee: Some(right_knee),
+            left_hip: Some(left_hip),
+            left_knee: Some(left_knee),
+        });
+    }
+
+    fn front_leg_side(&self, direction: f32) -> LegSide {
+        let left_x = self.foot_world(LegSide::Left).map(|p| p[0]).unwrap_or(0.0) * direction;
+        let right_x = self.foot_world(LegSide::Right).map(|p| p[0]).unwrap_or(0.0) * direction;
+        if right_x >= left_x {
+            LegSide::Right
+        } else {
+            LegSide::Left
+        }
+    }
+
+    fn apply_kick_targets(
+        &mut self,
+        kinematics: &FiveLinkKinematics,
+        pelvis: [f32; 2],
+        torso_angle: f32,
+        direction: f32,
+    ) {
+        let Some(ball) = self.ball_body_state() else {
+            self.kick_active = false;
+            return;
+        };
+        let support_target = match self.kick_support_side {
+            LegSide::Left => self.walk_left_anchor,
+            LegSide::Right => self.walk_right_anchor,
+        };
+        let support_solution = kinematics.solve_leg_ik(self.kick_support_side, pelvis, torso_angle, support_target);
+
+        let t = (self.kick_timer / 0.42).clamp(0.0, 1.0);
+        let swing_start = self.foot_world(self.kick_swing_side).unwrap_or([pelvis[0], GROUND_Y + 0.05]);
+        let backswing_x = pelvis[0] - direction * 0.22;
+        let backswing_y = GROUND_Y + 0.10;
+        let strike_x = ball.x + direction * 0.06;
+        let strike_y = (ball.y + 0.02).clamp(GROUND_Y + 0.08, 0.32);
+        let swing_target = if t < 0.35 {
+            let u = t / 0.35;
+            [
+                swing_start[0] + (backswing_x - swing_start[0]) * u,
+                swing_start[1] + (backswing_y - swing_start[1]) * u,
+            ]
+        } else {
+            let u = (t - 0.35) / 0.65;
+            [
+                backswing_x + (strike_x - backswing_x) * u,
+                backswing_y + (strike_y - backswing_y) * u,
+            ]
+        };
+        let swing_solution = kinematics.solve_leg_ik(self.kick_swing_side, pelvis, torso_angle, swing_target);
+
+        let zeros = self.config.servo.zero_offsets;
+        let mut targets = ServoTargets::default();
+        match (self.kick_support_side, support_solution) {
+            (LegSide::Left, Some(solution)) => {
+                targets.left_hip = Some(solution.hip);
+                targets.left_knee = Some(solution.knee);
+            }
+            (LegSide::Right, Some(solution)) => {
+                targets.right_hip = Some(solution.hip);
+                targets.right_knee = Some(solution.knee);
+            }
+            (LegSide::Left, None) => {
+                targets.left_hip = Some(zeros.left_hip);
+                targets.left_knee = Some(zeros.left_knee);
+            }
+            (LegSide::Right, None) => {
+                targets.right_hip = Some(zeros.right_hip);
+                targets.right_knee = Some(zeros.right_knee);
+            }
+        }
+        match (self.kick_swing_side, swing_solution) {
+            (LegSide::Left, Some(solution)) => {
+                targets.left_hip = Some(solution.hip);
+                targets.left_knee = Some(solution.knee);
+            }
+            (LegSide::Right, Some(solution)) => {
+                targets.right_hip = Some(solution.hip);
+                targets.right_knee = Some(solution.knee);
+            }
+            _ => {}
+        }
+        self.apply_targets(targets);
+
+        if !self.kick_impulse_used {
+            let ball_rel_x = (ball.x - pelvis[0]) * direction;
+            if ball_rel_x > -0.05 && ball_rel_x <= self.config.walk.kick_trigger_distance_m && ball.y <= 0.45 && t > 0.2 {
+                if let Some(ball_handle) = self.ball {
+                    if let Some(ball_body) = self.bodies.get_mut(ball_handle) {
+                        let impulse = vector![
+                            direction * self.config.walk.kick_forward_impulse_ns,
+                            self.config.walk.kick_upward_impulse_ns
+                        ];
+                        ball_body.apply_impulse(impulse, true);
+                    }
+                }
+                self.kick_impulse_used = true;
+                self.kick_cooldown = 1.2;
+            }
+        }
+
+        if self.kick_timer >= 0.42 {
+            self.kick_active = false;
+            self.kick_timer = 0.0;
+            self.kick_impulse_used = false;
+            self.refresh_walk_anchors_from_pose();
+        }
+    }
+
+    fn emergency_stand_reset(&mut self) {
+        let Some(robot) = &self.robot else {
+            return;
+        };
+        let torso = robot.torso;
+        let left_thigh = robot.left_thigh;
+        let left_shin = robot.left_shin;
+        let right_thigh = robot.right_thigh;
+        let right_shin = robot.right_shin;
+        let pose = if self.rl_target_direction >= 0.0 {
+            self.canonical_initial_pose.clone()
+        } else {
+            mirror_initial_pose(&self.canonical_initial_pose)
+        };
+        let targets = if self.rl_target_direction >= 0.0 {
+            self.canonical_initial_targets
+        } else {
+            mirror_joint_angles(self.canonical_initial_targets)
+        };
+        let base_x = self.body_state(torso).map(|body| body.x).unwrap_or(0.0);
+        let shift_x = base_x - pose.torso.x;
+        self.set_body_pose(torso, pose.torso, shift_x);
+        self.set_body_pose(left_thigh, pose.left_thigh, shift_x);
+        self.set_body_pose(left_shin, pose.left_shin, shift_x);
+        self.set_body_pose(right_thigh, pose.right_thigh, shift_x);
+        self.set_body_pose(right_shin, pose.right_shin, shift_x);
+        self.apply_targets(ServoTargets {
+            right_hip: Some(targets.right_hip),
+            right_knee: Some(targets.right_knee),
+            left_hip: Some(targets.left_hip),
+            left_knee: Some(targets.left_knee),
+        });
+        self.recovery_active = false;
+        self.recovery_timer = 0.0;
+        self.walk_speed = 0.0;
+        self.walk_phase = 0.0;
+        self.refresh_walk_anchors_from_pose();
+    }
+
+    fn apply_directional_reset_profile(&mut self) {
+        if self.rl_target_direction >= 0.0 {
+            self.config.robot.initial_pose = self.canonical_initial_pose.clone();
+            self.config.servo.zero_offsets = self.canonical_zero_offsets;
+            self.config.servo.initial_targets = self.canonical_initial_targets;
+        } else {
+            self.config.robot.initial_pose = mirror_initial_pose(&self.canonical_initial_pose);
+            self.config.servo.zero_offsets = mirror_joint_angles(self.canonical_zero_offsets);
+            self.config.servo.initial_targets = mirror_joint_angles(self.canonical_initial_targets);
+        }
+    }
+
+    fn walk_targets_from_state(
+        &self,
+        direction: f32,
+        state_progress: f32,
+        step_length: f32,
+        step_height: f32,
+        spread: f32,
+        support_shift: f32,
+        swing_retraction_m: f32,
+    ) -> (WalkLegTarget, WalkLegTarget) {
+        let state_progress = state_progress.clamp(0.0, 1.0);
+        let toeoff_blend = smoothstep01(state_progress);
+        let toeoff_shift = direction * (0.04 * step_length + 0.10 * spread + 0.15 * support_shift);
+        let toe_lift = 0.20 * step_height * toeoff_blend;
+
+        let mut left = WalkLegTarget {
+            target: self.walk_left_anchor,
+            phase: WalkLegPhase::MidStance,
+            in_stance: true,
+        };
+        let mut right = WalkLegTarget {
+            target: self.walk_right_anchor,
+            phase: WalkLegPhase::MidStance,
+            in_stance: true,
+        };
+
+        match self.walk_support_state {
+            WalkSupportState::DoubleSupportLeft => {
+                left.phase = WalkLegPhase::LoadingResponse;
+                right.phase = WalkLegPhase::PreSwing;
+                right.target = [
+                    lerp(self.walk_right_anchor[0], self.walk_right_anchor[0] + toeoff_shift, 0.35 * toeoff_blend),
+                    GROUND_Y + toe_lift,
+                ];
+            }
+            WalkSupportState::SingleSupportLeft => {
+                left.phase = WalkLegPhase::MidStance;
+                right = self.swing_leg_target(
+                    self.walk_right_swing_start,
+                    self.walk_right_touchdown_x,
+                    direction,
+                    state_progress,
+                    step_height,
+                    swing_retraction_m,
+                );
+            }
+            WalkSupportState::DoubleSupportRight => {
+                right.phase = WalkLegPhase::LoadingResponse;
+                left.phase = WalkLegPhase::PreSwing;
+                left.target = [
+                    lerp(self.walk_left_anchor[0], self.walk_left_anchor[0] + toeoff_shift, 0.35 * toeoff_blend),
+                    GROUND_Y + toe_lift,
+                ];
+            }
+            WalkSupportState::SingleSupportRight => {
+                right.phase = WalkLegPhase::MidStance;
+                left = self.swing_leg_target(
+                    self.walk_left_swing_start,
+                    self.walk_left_touchdown_x,
+                    direction,
+                    state_progress,
+                    step_height,
+                    swing_retraction_m,
+                );
+            }
+        }
+
+        (left, right)
+    }
+
+    fn swing_leg_target(
+        &self,
+        swing_start: [f32; 2],
+        touchdown_x: f32,
+        direction: f32,
+        state_progress: f32,
+        step_height: f32,
+        swing_retraction_m: f32,
+    ) -> WalkLegTarget {
+        let state_progress = state_progress.clamp(0.0, 1.0);
+        let _ = (direction, swing_retraction_m);
+        let phase = if state_progress < 0.32 {
+            WalkLegPhase::InitialSwing
+        } else if state_progress < 0.72 {
+            WalkLegPhase::MidSwing
+        } else {
+            WalkLegPhase::TerminalSwing
+        };
+        // Continuous position and zero endpoint velocity at liftoff/touchdown.
+        let blend = state_progress.powi(3) * (10.0 - 15.0 * state_progress + 6.0 * state_progress.powi(2));
+        let x = lerp(swing_start[0], touchdown_x, blend);
+        let y = lerp(swing_start[1], GROUND_Y, blend)
+            + step_height * (std::f32::consts::PI * state_progress).sin().powi(2);
+
+        WalkLegTarget {
+            target: [x, y],
+            phase,
+            in_stance: false,
+        }
+    }
+
+    fn walk_leg_target_world(
+        &mut self,
+        side: LegSide,
+        direction: f32,
+        phase: f32,
+        pelvis_x: f32,
+        step_length: f32,
+        step_height: f32,
+        spread: f32,
+        support_shift: f32,
+        stance_duty: f32,
+        swing_retraction_m: f32,
+    ) -> WalkLegTarget {
+        let phase_offset = match side {
+            LegSide::Right => 0.0,
+            LegSide::Left => std::f32::consts::PI,
+        };
+        let cycle = ((phase + phase_offset).rem_euclid(std::f32::consts::TAU)) / std::f32::consts::TAU;
+        let stance_duty = stance_duty.clamp(0.50, 0.85);
+        let current_foot = self.foot_world(side);
+        let (phase_kind, phase_progress, in_stance) = classify_walk_leg_phase(cycle, stance_duty);
+        let anchor = match side {
+            LegSide::Left => &mut self.walk_left_anchor,
+            LegSide::Right => &mut self.walk_right_anchor,
+        };
+        let touchdown_x_slot = match side {
+            LegSide::Left => &mut self.walk_left_touchdown_x,
+            LegSide::Right => &mut self.walk_right_touchdown_x,
+        };
+        let was_in_stance = match side {
+            LegSide::Left => &mut self.walk_left_in_stance,
+            LegSide::Right => &mut self.walk_right_in_stance,
+        };
+        let touchdown_x = pelvis_x + direction * (0.30 * step_length + 0.45 * spread + support_shift);
+        let toeoff_x = anchor[0] + direction * (0.10 * step_length + 0.18 * spread + 0.25 * support_shift);
+        let midswing_x = pelvis_x + direction * (0.12 * step_length + 0.22 * spread + 0.35 * support_shift);
+
+        if !in_stance && *was_in_stance {
+            if let Some(current_foot) = current_foot {
+                *anchor = [current_foot[0], GROUND_Y];
+            }
+            *touchdown_x_slot = touchdown_x;
+        } else if in_stance && !*was_in_stance {
+            *anchor = [*touchdown_x_slot, GROUND_Y];
+        }
+        *was_in_stance = in_stance;
+
+        let touchdown_x = *touchdown_x_slot;
+        let overshoot_x = touchdown_x + direction * swing_retraction_m;
+        let target = match phase_kind {
+            WalkLegPhase::LoadingResponse | WalkLegPhase::MidStance => *anchor,
+            WalkLegPhase::PreSwing => {
+                let s = smoothstep01(phase_progress);
+                [
+                    lerp(anchor[0], toeoff_x, 0.35 * s),
+                    GROUND_Y + 0.22 * step_height * s,
+                ]
+            }
+            WalkLegPhase::InitialSwing => {
+                let s = smoothstep01(phase_progress);
+                [
+                    lerp(toeoff_x, midswing_x, s),
+                    GROUND_Y + lerp(0.22 * step_height, 0.95 * step_height, s),
+                ]
+            }
+            WalkLegPhase::MidSwing => {
+                let s = smoothstep01(phase_progress);
+                let arch = 1.0 - (2.0 * s - 1.0).abs();
+                [
+                    lerp(midswing_x, overshoot_x, s),
+                    GROUND_Y + step_height * (0.80 + 0.20 * arch),
+                ]
+            }
+            WalkLegPhase::TerminalSwing => {
+                let s = smoothstep01(phase_progress);
+                [
+                    lerp(overshoot_x, touchdown_x, s),
+                    GROUND_Y + lerp(0.55 * step_height, 0.0, s),
+                ]
+            }
+        };
+
+        WalkLegTarget {
+            target,
+            phase: phase_kind,
+            in_stance,
+        }
+    }
+
+    fn sync_rl_trackers(&mut self) {
+        self.rl_episode_time = 0.0;
+        self.rl_last_base_x = self.robot_base_x();
+        self.rl_last_ball_x = self.ball_x();
+        self.rl_last_action_deg = [0.0; 4];
+        self.rl_residual_enabled = false;
+        self.rl_residual_action_deg = [0.0; 4];
+    }
+
+    fn robot_base_x(&self) -> f32 {
+        self.robot
+            .as_ref()
+            .and_then(|robot| self.body_state(robot.torso))
+            .map(|body| body.x)
+            .unwrap_or(0.0)
+    }
+
+    fn ball_x(&self) -> f32 {
+        self.ball
+            .and_then(|handle| self.body_state(handle))
+            .map(|body| body.x)
+            .unwrap_or(0.0)
+    }
+
+    fn current_relative_targets_deg(&self) -> [f32; 4] {
+        let zeros = self.config.servo.zero_offsets;
+        let targets = self.current_targets();
+        [
+            targets
+                .right_hip
+                .map(|value| (value - zeros.right_hip).to_degrees())
+                .unwrap_or_default(),
+            targets
+                .right_knee
+                .map(|value| (value - zeros.right_knee).to_degrees())
+                .unwrap_or_default(),
+            targets
+                .left_hip
+                .map(|value| (value - zeros.left_hip).to_degrees())
+                .unwrap_or_default(),
+            targets
+                .left_knee
+                .map(|value| (value - zeros.left_knee).to_degrees())
+                .unwrap_or_default(),
+        ]
+    }
+
+    fn rl_done(&self) -> (bool, bool) {
+        let observation = self.rl_observation();
+        let done = observation.torso_height < self.config.rl.torso_min_height
+            || observation.torso_angle.abs() > self.config.rl.torso_max_tilt_rad;
+        let truncated = self.rl_episode_time >= self.config.rl.episode_timeout_s;
+        (done, truncated)
+    }
+
+    fn rl_step_result(&self, forward_progress: f32, ball_progress: f32, action_delta_penalty: f32) -> RlStepResult {
+        let observation = self.rl_observation();
+        let upright_bonus = observation.torso_angle.cos().max(-1.0);
+        let height_span = (self.config.robot.initial_pose.torso.y - self.config.rl.torso_min_height).max(0.1);
+        let height_bonus = ((observation.torso_height - self.config.rl.torso_min_height) / height_span).clamp(0.0, 1.0);
+        let contact_bonus = if observation.contacts.left_foot || observation.contacts.right_foot {
+            1.0
+        } else {
+            0.0
+        };
+        let torque_penalty = self
+            .state()
+            .joints
+            .values()
+            .map(|joint| joint.torque.abs() / self.servo_max_torque.max(0.0001))
+            .sum::<f32>();
+        let breakdown = RlRewardBreakdown {
+            forward_progress: forward_progress * self.config.rl.reward_forward_weight,
+            ball_progress: ball_progress * self.config.rl.reward_ball_forward_weight,
+            alive_bonus: self.config.rl.reward_alive_bonus,
+            upright_bonus: upright_bonus * self.config.rl.reward_upright_weight,
+            height_bonus: height_bonus * self.config.rl.reward_height_weight,
+            contact_bonus: contact_bonus * self.config.rl.reward_contact_weight,
+            torque_penalty: torque_penalty * self.config.rl.penalty_torque_weight,
+            action_delta_penalty: action_delta_penalty * self.config.rl.penalty_action_delta_weight,
+        };
+        let reward = breakdown.forward_progress
+            + breakdown.ball_progress
+            + breakdown.alive_bonus
+            + breakdown.upright_bonus
+            + breakdown.height_bonus
+            + breakdown.contact_bonus
+            - breakdown.torque_penalty
+            - breakdown.action_delta_penalty;
+        let (done, truncated) = self.rl_done();
+        RlStepResult {
+            observation,
+            reward,
+            done,
+            truncated,
+            episode_time: self.rl_episode_time,
+            breakdown,
+        }
+    }
+
+    fn body_point(&self, handle: RigidBodyHandle, local: Point<Real>) -> Option<[f32; 2]> {
+        self.bodies.get(handle).map(|body| {
+            let point = body.position() * local;
+            [point.x, point.y]
+        })
+    }
+
+    fn body_state(&self, handle: RigidBodyHandle) -> Option<BodyState> {
+        self.bodies.get(handle).map(|body| BodyState {
+            x: body.translation().x,
+            y: body.translation().y,
+            angle: body.rotation().angle(),
+            vx: body.linvel().x,
+            vy: body.linvel().y,
+            omega: body.angvel(),
+        })
+    }
+
+    fn set_body_pose(&mut self, handle: RigidBodyHandle, pose: BodyPoseConfig, shift_x: f32) {
+        if let Some(body) = self.bodies.get_mut(handle) {
+            body.set_translation(vector![pose.x + shift_x, pose.y], true);
+            body.set_rotation(Rotation::new(pose.angle), true);
+            body.set_linvel(vector![0.0, 0.0], true);
+            body.set_angvel(0.0, true);
+        }
+    }
+
+    fn relative_angle(&self, parent: RigidBodyHandle, child: RigidBodyHandle) -> Option<f32> {
+        let parent = self.bodies.get(parent)?;
+        let child = self.bodies.get(child)?;
+        Some(normalize_angle(child.rotation().angle() - parent.rotation().angle()))
+    }
+
+    fn relative_velocity(&self, parent: RigidBodyHandle, child: RigidBodyHandle) -> Option<f32> {
+        let parent = self.bodies.get(parent)?;
+        let child = self.bodies.get(child)?;
+        Some(child.angvel() - parent.angvel())
+    }
+
+    fn update_gait_quality(&mut self) {
+        let Some(robot) = self.robot.as_ref() else { return; };
+        let mut feet = [false; 2];
+        let mut forbidden = false;
+        for handle in [robot.torso, robot.left_thigh, robot.right_thigh, robot.left_shin, robot.right_shin] {
+            for collider in self.bodies[handle].colliders() {
+                for pair in self.narrow_phase.contact_pairs_with(*collider) {
+                    let first = pair.collider1 == *collider;
+                    let other = if first {pair.collider2} else {pair.collider1};
+                    if !pair.has_any_active_contact || !self.colliders[other].collision_groups().memberships.intersects(GROUP_GROUND) { continue; }
+                    let side = if handle == robot.left_shin {Some(0)} else if handle == robot.right_shin {Some(1)} else {None};
+                    for manifold in &pair.manifolds {
+                        for contact in &manifold.points {
+                            if contact.dist > 0.005 { continue; }
+                            let point = if first {contact.local_p1} else {contact.local_p2};
+                            if let Some(side) = side {
+                                if point.y <= -0.4 * self.config.robot.shin.length { feet[side] = true; }
+                                else { forbidden = true; }
+                            } else { forbidden = true; }
+                        }
+                    }
+                }
+            }
+        }
+        let body = &self.bodies[robot.torso];
+        let hip = body.position() * point![0.0, -self.config.robot.torso.length * 0.5];
+        let height = hip.y / (self.config.robot.thigh.length + self.config.robot.shin.length).max(0.01);
+        self.gait_quality.sample(self.dt(), body.rotation().angle(), height, body.linvel().x, feet, forbidden, self.robot_suspended);
+    }
+
+    fn foot_contact(&self, left: bool) -> bool {
+        let Some(robot) = &self.robot else {
+            return false;
+        };
+        let collider = if left {
+            robot.left_shin_collider
+        } else {
+            robot.right_shin_collider
+        };
+        self.narrow_phase
+            .contact_pairs_with(collider)
+            .any(|pair| {
+                let other = if pair.collider1 == collider { pair.collider2 } else { pair.collider1 };
+                pair.has_any_active_contact && self.colliders[other].collision_groups().memberships.intersects(GROUP_GROUND)
+            })
+    }
+
+    fn current_targets(&self) -> ServoTargets {
+        let mut targets = ServoTargets::default();
+        if let Some(robot) = &self.robot {
+            for (joint, servo) in &robot.servos {
+                match joint {
+                    JointName::RightHip => targets.right_hip = Some(servo.target),
+                    JointName::RightKnee => targets.right_knee = Some(servo.target),
+                    JointName::LeftHip => targets.left_hip = Some(servo.target),
+                    JointName::LeftKnee => targets.left_knee = Some(servo.target),
+                }
+            }
+        }
+        targets
+    }
+
+    fn current_targets_map(&self) -> BTreeMap<String, f32> {
+        let mut joints = BTreeMap::new();
+        let targets = self.current_targets();
+        if let Some(value) = targets.right_hip {
+            joints.insert("right_hip".to_owned(), value);
+        }
+        if let Some(value) = targets.right_knee {
+            joints.insert("right_knee".to_owned(), value);
+        }
+        if let Some(value) = targets.left_hip {
+            joints.insert("left_hip".to_owned(), value);
+        }
+        if let Some(value) = targets.left_knee {
+            joints.insert("left_knee".to_owned(), value);
+        }
+        joints
+    }
+
+    fn current_commanded_targets(&self) -> ServoTargets {
+        let mut targets = ServoTargets::default();
+        if let Some(robot) = &self.robot {
+            for (joint, servo) in &robot.servos {
+                match joint {
+                    JointName::RightHip => targets.right_hip = Some(servo.commanded_target),
+                    JointName::RightKnee => targets.right_knee = Some(servo.commanded_target),
+                    JointName::LeftHip => targets.left_hip = Some(servo.commanded_target),
+                    JointName::LeftKnee => targets.left_knee = Some(servo.commanded_target),
+                }
+            }
+        }
+        targets
+    }
+
+    fn sync_runtime_settings_into_config(&mut self) {
+        let targets = self.current_targets();
+        self.config.servo.kp = self.servo_kp;
+        self.config.servo.ki = self.servo_ki;
+        self.config.servo.kd = self.servo_kd;
+        self.config.servo.max_torque = self.servo_max_torque;
+        self.config.servo.max_speed_deg_s = self.servo_max_speed_rad_s.to_degrees();
+        self.config.walk.nominal_speed_mps = self.walk_target_speed;
+        if let Some(robot) = &self.robot {
+            if let Some(body) = self.body_state(robot.torso) {
+                self.config.robot.initial_pose.torso = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.left_thigh) {
+                self.config.robot.initial_pose.left_thigh = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.left_shin) {
+                self.config.robot.initial_pose.left_shin = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.right_thigh) {
+                self.config.robot.initial_pose.right_thigh = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+            if let Some(body) = self.body_state(robot.right_shin) {
+                self.config.robot.initial_pose.right_shin = BodyPoseConfig {
+                    x: body.x,
+                    y: body.y,
+                    angle: body.angle,
+                };
+            }
+        }
+        self.config.servo.initial_targets = JointAnglesConfig {
+            right_hip: targets
+                .right_hip
+                .unwrap_or(self.config.servo.initial_targets.right_hip),
+            right_knee: targets
+                .right_knee
+                .unwrap_or(self.config.servo.initial_targets.right_knee),
+            left_hip: targets
+                .left_hip
+                .unwrap_or(self.config.servo.initial_targets.left_hip),
+            left_knee: targets
+                .left_knee
+                .unwrap_or(self.config.servo.initial_targets.left_knee),
+        };
+        self.canonical_initial_pose = self.config.robot.initial_pose.clone();
+        self.canonical_zero_offsets = self.config.servo.zero_offsets;
+        self.canonical_initial_targets = self.config.servo.initial_targets;
+    }
+
+    /// Fixed integration interval in seconds.
+    pub fn dt(&self) -> f32 {
+        self.integration_parameters.dt
+    }
+}
+
+fn mirror_body_pose(pose: BodyPoseConfig) -> BodyPoseConfig {
+    BodyPoseConfig {
+        x: -pose.x,
+        y: pose.y,
+        angle: -pose.angle,
+    }
+}
+
+fn mirror_initial_pose(pose: &InitialPoseConfig) -> InitialPoseConfig {
+    InitialPoseConfig {
+        torso: mirror_body_pose(pose.torso),
+        left_thigh: mirror_body_pose(pose.left_thigh),
+        left_shin: mirror_body_pose(pose.left_shin),
+        right_thigh: mirror_body_pose(pose.right_thigh),
+        right_shin: mirror_body_pose(pose.right_shin),
+    }
+}
+
+fn mirror_joint_angles(angles: JointAnglesConfig) -> JointAnglesConfig {
+    JointAnglesConfig {
+        right_hip: -angles.right_hip,
+        right_knee: -angles.right_knee,
+        left_hip: -angles.left_hip,
+        left_knee: -angles.left_knee,
+    }
+}
+
+impl JointServo {
+    fn new(parent: RigidBodyHandle, child: RigidBodyHandle, target: f32) -> Self {
+        Self {
+            parent,
+            child,
+            target,
+            commanded_target: target,
+            last_torque: 0.0,
+            integral_error: 0.0,
+        }
+    }
+}
+
+fn interpolate_joint_map(
+    start: &BTreeMap<String, f32>,
+    end: &BTreeMap<String, f32>,
+    alpha: f32,
+) -> BTreeMap<String, f32> {
+    let mut joints = BTreeMap::new();
+    for name in ["right_hip", "right_knee", "left_hip", "left_knee"] {
+        let start_value = start.get(name).copied().unwrap_or_default();
+        let end_value = end.get(name).copied().unwrap_or(start_value);
+        joints.insert(name.to_owned(), start_value + (end_value - start_value) * alpha);
+    }
+    joints
+}
+
+fn enforce_min_foot_separation(left_target: &mut [f32; 2], right_target: &mut [f32; 2], min_separation: f32) {
+    let min_separation = min_separation.max(0.0);
+    let dx = right_target[0] - left_target[0];
+    if dx.abs() >= min_separation {
+        return;
+    }
+    let midpoint = 0.5 * (left_target[0] + right_target[0]);
+    let sign = if dx >= 0.0 { 1.0 } else { -1.0 };
+    let half = 0.5 * min_separation;
+    left_target[0] = midpoint - sign * half;
+    right_target[0] = midpoint + sign * half;
+}
+
+fn classify_walk_leg_phase(cycle: f32, stance_duty: f32) -> (WalkLegPhase, f32, bool) {
+    let cycle = cycle.rem_euclid(1.0);
+    let stance_duty = stance_duty.clamp(0.50, 0.85);
+    if cycle < stance_duty {
+        let loading_end = stance_duty * 0.18;
+        let mid_end = stance_duty * 0.74;
+        if cycle < loading_end {
+            (
+                WalkLegPhase::LoadingResponse,
+                (cycle / loading_end.max(1e-4)).clamp(0.0, 1.0),
+                true,
+            )
+        } else if cycle < mid_end {
+            (
+                WalkLegPhase::MidStance,
+                ((cycle - loading_end) / (mid_end - loading_end).max(1e-4)).clamp(0.0, 1.0),
+                true,
+            )
+        } else {
+            (
+                WalkLegPhase::PreSwing,
+                ((cycle - mid_end) / (stance_duty - mid_end).max(1e-4)).clamp(0.0, 1.0),
+                true,
+            )
+        }
+    } else {
+        let swing_phase = ((cycle - stance_duty) / (1.0 - stance_duty)).clamp(0.0, 1.0);
+        if swing_phase < 0.28 {
+            (
+                WalkLegPhase::InitialSwing,
+                (swing_phase / 0.28).clamp(0.0, 1.0),
+                false,
+            )
+        } else if swing_phase < 0.72 {
+            (
+                WalkLegPhase::MidSwing,
+                ((swing_phase - 0.28) / 0.44).clamp(0.0, 1.0),
+                false,
+            )
+        } else {
+            (
+                WalkLegPhase::TerminalSwing,
+                ((swing_phase - 0.72) / 0.28).clamp(0.0, 1.0),
+                false,
+            )
+        }
+    }
+}
+
+fn smoothstep01(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    value * value * (3.0 - 2.0 * value)
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t.clamp(0.0, 1.0)
+}
+
+fn opposite_leg(side: LegSide) -> LegSide {
+    match side {
+        LegSide::Left => LegSide::Right,
+        LegSide::Right => LegSide::Left,
+    }
+}
+
+fn normalize_angle(angle: f32) -> f32 {
+    let mut wrapped = angle;
+    while wrapped > std::f32::consts::PI {
+        wrapped -= std::f32::consts::TAU;
+    }
+    while wrapped < -std::f32::consts::PI {
+        wrapped += std::f32::consts::TAU;
+    }
+    wrapped
+}
+
+fn clamp_joint_target(_joint: JointName, angle: f32) -> f32 {
+    angle.clamp(-std::f32::consts::PI, std::f32::consts::PI)
+}
+
+#[cfg(test)]
+mod ball_mass_tests {
+    use super::*;
+
+    #[test]
+    fn ball_and_feet_have_independent_surface_materials() {
+        let sim = Simulation::from_config(SimulationConfig::default());
+        let grounds: Vec<_> = sim.colliders.iter().map(|(_,c)|c)
+            .filter(|c|c.collision_groups().memberships == GROUP_GROUND).collect();
+        assert_eq!(grounds.len(), 2);
+        let ball_ground=grounds.iter().find(|c|c.collision_groups().filter.intersects(GROUP_BALL)).unwrap();
+        let feet_ground=grounds.iter().find(|c|c.collision_groups().filter.intersects(all_robot_groups())).unwrap();
+        assert!(!ball_ground.collision_groups().filter.intersects(all_robot_groups()));
+        assert!(!feet_ground.collision_groups().filter.intersects(GROUP_BALL));
+        assert!((feet_ground.friction()-1.35).abs()<1e-6);
+        let ball=&sim.colliders[sim.bodies[sim.ball.unwrap()].colliders()[0]];
+        assert_eq!(ball.friction_combine_rule(), CoefficientCombineRule::Multiply);
+        assert!((ball.friction()*ball_ground.friction()-0.243).abs()<1e-6);
+    }
+
+    #[test]
+    fn configured_ball_mass_is_used_by_physics() {
+        for mass in [0.1, 0.43] {
+            let mut config = SimulationConfig::default();
+            config.robot.ball_mass_kg = mass;
+            let sim = Simulation::from_config(config);
+            let body = &sim.bodies[sim.ball.unwrap()];
+            assert!((body.mass() - mass).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn old_config_keeps_one_hundred_gram_ball() {
+        let mut config = serde_json::to_value(SimulationConfig::default()).unwrap();
+        config["robot"].as_object_mut().unwrap().remove("ball_mass_kg");
+        let config: SimulationConfig = serde_json::from_value(config).unwrap();
+        assert_eq!(config.robot.ball_mass_kg, 0.1);
+    }
+}

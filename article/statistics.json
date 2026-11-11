@@ -1,0 +1,119 @@
+{
+  "n": 101,
+  "gained_finishes": 22,
+  "lost_finishes": 0,
+  "finish_gain_pp": 21.782178217821784,
+  "mean_return_gain": 130.9216411968262,
+  "paired_return_gain_lower95_one_sided": 88.35256045783869,
+  "bootstrap_resamples": 2000,
+  "bootstrap_seed": 80261111,
+  "interpretation": "Exploratory paired validation panel used for module acceptance; not an external test.",
+  "by_kind": [
+    {
+      "kind": "nominal",
+      "n": 1,
+      "base_finish": 1,
+      "base_first_fall": 0,
+      "base_terminal_failure": 0,
+      "r009_finish": 1,
+      "r009_first_fall": 0,
+      "r009_terminal_failure": 0
+    },
+    {
+      "kind": "angle",
+      "n": 25,
+      "base_finish": 12,
+      "base_first_fall": 13,
+      "base_terminal_failure": 13,
+      "r009_finish": 24,
+      "r009_first_fall": 13,
+      "r009_terminal_failure": 1
+    },
+    {
+      "kind": "pose",
+      "n": 25,
+      "base_finish": 16,
+      "base_first_fall": 6,
+      "base_terminal_failure": 6,
+      "r009_finish": 20,
+      "r009_first_fall": 6,
+      "r009_terminal_failure": 1
+    },
+    {
+      "kind": "push",
+      "n": 25,
+      "base_finish": 21,
+      "base_first_fall": 4,
+      "base_terminal_failure": 4,
+      "r009_finish": 22,
+      "r009_first_fall": 4,
+      "r009_terminal_failure": 3
+    },
+    {
+      "kind": "combined",
+      "n": 25,
+      "base_finish": 19,
+      "base_first_fall": 6,
+      "base_terminal_failure": 6,
+      "r009_finish": 24,
+      "r009_first_fall": 6,
+      "r009_terminal_failure": 1
+    }
+  ],
+  "base": {
+    "score": -116.3348284352629,
+    "mean_return": 45.48150594596596,
+    "cvar25_return": -495.33455942405146,
+    "constraint_penalty": 37.98269452521599,
+    "constraints": {
+      "finish_shortfall": 0.11683168316831682,
+      "contact_excess": 0.04091588409993693
+    },
+    "feasible": false,
+    "finishers": 69,
+    "cases": 101,
+    "finish_rate": 0.6831683168316832,
+    "mean_distance_m": 72.33896665869207,
+    "wrong_contact_fraction": 0.04591588409993693,
+    "mean_finish_s": 43.63370913043478,
+    "fall_events": 29,
+    "recoveries": 0,
+    "recovery_failures": 29,
+    "outcomes": {
+      "finish": 69,
+      "fall": 29,
+      "timeout": 3
+    },
+    "first_fall_episodes": 29,
+    "finish_after_recovery": 0,
+    "repeat_falls": 0
+  },
+  "r009": {
+    "score": 120.50994082084917,
+    "mean_return": 176.40314714279214,
+    "cvar25_return": -134.45284604715917,
+    "constraint_penalty": 22.27999481015318,
+    "constraints": {
+      "finish_shortfall": 0,
+      "contact_excess": 0.04455998962030636
+    },
+    "feasible": false,
+    "finishers": 91,
+    "cases": 101,
+    "finish_rate": 0.900990099009901,
+    "mean_distance_m": 91.75234176580496,
+    "wrong_contact_fraction": 0.04955998962030636,
+    "mean_finish_s": 45.232952208791204,
+    "fall_events": 34,
+    "recoveries": 28,
+    "recovery_failures": 6,
+    "outcomes": {
+      "finish": 91,
+      "fall": 6,
+      "timeout": 4
+    },
+    "first_fall_episodes": 29,
+    "finish_after_recovery": 22,
+    "repeat_falls": 5
+  }
+}
